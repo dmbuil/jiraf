@@ -1,0 +1,10 @@
+/target
+
+# local, never published: secrets, real config, cached Jira icons, mockup with real data
+.env
+jiraf.toml
+/icons
+/mockup
+
+.DS_Store
+/.claude/

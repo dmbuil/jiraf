@@ -1,0 +1,385 @@
+# jiraf
+
+[![Release](https://img.shields.io/github/v/release/dmbuil/jiraf?include_prereleases&sort=semver)](https://github.com/dmbuil/jiraf/releases)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdmbuil%2Fjiraf%2FHEAD%2FCargo.toml&query=%24.package.version&label=version)](Cargo.toml)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-blue)](https://www.rust-lang.org/)
+[![Last commit](https://img.shields.io/github/last-commit/dmbuil/jiraf)](https://github.com/dmbuil/jiraf/commits)
+![Jira](https://img.shields.io/badge/Jira-Data%20Center-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
+
+<p align="center"><b>Jira + follow-up = jiraf.</b> Keeping an eye on everything, from a tall vantage point.</p>
+
+
+<p align="center">
+  <img src="docs/jiraf.png" alt="jiraf, a cartoon giraffe in round glasses tapping a follow-up dashboard" width="250">
+</p>
+
+jiraf is a lean, stateless follow-up dashboard for **Jira Data Center** with **Advanced Roadmaps
+(Plans)**. Plans is built for planning: timelines, scheduling, releases, teams. jiraf is built for the
+weekly follow-up meeting. It answers "where are we, what's stuck, what's stale" and lets you fix it
+on the spot:
+
+- **Bubbles**: each one is a named JQL filter. Switch between projects or workstreams in one click.
+- **Hierarchy tree**: Initiative › Epic › Task › Sub-task, collapsible at every level.
+- **Tabs by purpose**: e.g. *Roadmap* vs *Sustainability & Support*, decided by the Initiative Label.
+- **Needs attention**: what's blocked, late, gone quiet, or just closed.
+- **Inline editing** that writes straight to Jira: Status, Priority, Assignee, Target end and the
+  *Extended Status* follow-up note.
+
+**Stateless by design.** Every view is built from live Jira queries, and every edit goes straight back to
+Jira. jiraf has no database. It only keeps a short in-memory cache and local copies of Jira's icons.
+
+---
+
+## Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Using the dashboard](#using-the-dashboard)
+- [Configuration](#configuration)
+  - [Bubbles](#bubbles)
+  - [Tabs](#tabs)
+  - [Field ids](#field-ids)
+  - [Reference](#reference)
+- [Recipe: a bubble that follows a hierarchy](#recipe-a-bubble-that-follows-a-hierarchy)
+- [How it works](#how-it-works)
+- [Security](#security)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Requirements
+
+| What                                                   | Why                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| **Rust 1.88+** (`rustup update`)                       | to build jiraf                                                                                         |
+| **Jira Data Center / Server** with REST API v2         | data source (tested on Jira DC 10.3)                                                                   |
+| A Jira **Personal Access Token**                       | jiraf acts as you: it sees what you see and edits as you                                               |
+| **Advanced Roadmaps** (Plans)                          | *Parent Link*, *Target start* and *Target end* fields                                                  |
+| A single-line text custom field for the follow-up note | the *Extended Status* column                                                                           |
+| *Optional:* **ScriptRunner**                           | only for bubbles that follow a hierarchy (see the [recipe](#recipe-a-bubble-that-follows-a-hierarchy)) |
+
+## Quick start
+
+```sh
+git clone <this repo> jiraf && cd jiraf
+
+cp .env.example .env              # paste your token after JIRA_TOKEN=
+cp jiraf.example.toml jiraf.toml  # set your Jira URL, field ids, tabs and bubbles
+
+cargo run --release               # reads ./jiraf.toml
+# or: cargo run --release -- path/to/other.toml
+
+open http://127.0.0.1:8080/
+```
+
+To create a token, go to **Jira › your avatar › Profile › Personal Access Tokens › Create token**.
+
+On startup jiraf checks the token (`GET /rest/api/2/myself`) and that the configured Extended Status
+field exists, then logs:
+
+```
+INFO jiraf] connected to https://jira.example.com as JANE DOE
+INFO jiraf] jiraf on http://127.0.0.1:8080/
+```
+
+Set `RUST_LOG=debug` for more detail, or `RUST_LOG=warn` for less.
+
+## Using the dashboard
+
+```
+┌ jiraf  [∗ All 368] [Alpha 20] [Beta 224] [Beta Core 52] …                     ● 14:05  ◐  ↻ ┐
+│ Beta  JQL ↗   Roadmap 157 │ Sust. & Support 67 │ Needs attention 200     224 Open  18 Blocked … │
+│ ┌ filter… ┐ [Initiative][Epic][Task][Sub-task]  + closed 14d            Expand all  Collapse all │
+│ ISSUE                           STATUS       P  ASSIGNEE   TARGET END   EXTENDED STATUS      💬 │
+│ ▾ ABC-9  Initiative …           BLOCKED      ⌃  Jane Doe   —            601d  Kick-off …   27 │
+│     ▸ ABC-964  Epic …           IN PROGRESS  ⌄  Unassigned  —            —  No status note     │
+```
+
+### Top bar
+
+- **Bubbles** each show three counts: open (grey), blocked (red), and no update in `stale_days`+ (amber).
+  **All** combines every bubble. Use **← / →** to move between bubbles.
+- **●** shows when the data was last loaded. It's amber while loading and red on error.
+- **◐ / ☀ / ☾** cycles the theme: Auto (follows your OS), Light, Dark. The choice is remembered in this
+  browser only.
+- **↻** reloads from Jira, bypassing the cache.
+
+### Header row
+
+- **JQL ↗** opens the bubble's effective JQL in Jira's issue search.
+- **Tabs**: one per configured tab, then **Needs attention**. An **Other** tab appears only if an
+  Initiative matches no tab rule.
+- **Counters**: Open, Blocked, Late, No update, Closed recently. Click one to jump to its list.
+
+The URL keeps your place (`#p=<bubble>&t=<tab>`), so a view can be bookmarked or shared.
+
+### The tree
+
+- **▸/▾** collapses or expands a row. It's greyed out when the row has no children. A collapsed row
+  shows **+N**, the number of hidden children.
+- Parents come from the Sub-task parent, then *Parent Link*, then *Epic Link*. Parents outside your
+  filters (closed, or in another project) are fetched anyway and shown **dimmed**, so the tree is never
+  broken.
+- **Filter box**: matches key, summary, assignee and the status note. The ancestors of any match stay
+  visible.
+- **Type toggles** hide a level. Its children then attach to the nearest visible ancestor.
+- **+ closed Nd** also shows issues closed within the last `done_days`.
+- **Column headers** sort the rows within each level. Click once for ascending, twice for descending,
+  and a third time to turn sorting off.
+- In **All**, rows are grouped under each bubble.
+
+### Editing
+
+Every edit goes straight to Jira. The row then shows the issue as Jira returns it, and the edited cell
+gets a blue marker. If Jira refuses an edit (workflow rule, permission, validation), its message
+appears in a red toast at the bottom of the page.
+
+| Column              | How                                                                                          | Jira call                       |
+| ------------------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
+| **Status**          | click the pill; you get only the transitions the workflow allows from the current status     | `POST /issue/{key}/transitions` |
+| **P** (priority)    | click the icon                                                                               | `PUT /issue/{key}`              |
+| **Assignee**        | click; type to search people who can be assigned the issue (deactivated users are hidden)    | `PUT /issue/{key}/assignee`     |
+| **Target end**      | click; pick a date, or **Clear**                                                             | `PUT /issue/{key}`              |
+| **Extended status** | click the text; **⌘/Ctrl + Enter** saves, **Esc** cancels; **+ dd/mm** prepends today's date | `PUT /issue/{key}`              |
+
+The **age chip** next to the Extended Status shows how long ago *the field itself* was last edited.
+jiraf reads that from the issue changelog, so a date typed into the text doesn't matter:
+
+| Chip        | Meaning                                            |
+| ----------- | -------------------------------------------------- |
+| green `3d`  | edited ≤ 7 days ago                                |
+| amber `21d` | ≤ `stale_days`                                     |
+| red `120d`  | older than `stale_days`                            |
+| `orig.`     | set when the issue was created, never edited since |
+| `—`         | empty                                              |
+
+**💬 N** is the comment count. Hover over it to read the latest comment (trimmed to 3,000 characters). The
+link in the popover opens the full thread in Jira.
+
+### Needs attention
+
+The same issues as the tree, as four lists. Each open issue appears in at most one of the first three:
+
+| List                  | Rule                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 🚧 **Blocked**         | status name contains "Blocked"                                                                                |
+| ⏰ **Past target end** | *Target end* is in the past (and not blocked)                                                                 |
+| 💤 **No update**       | Extended Status (or, if never set, the issue) unchanged for more than `stale_days` (and neither of the above) |
+| ✅ **Closed recently** | resolved within `done_days`                                                                                   |
+
+Rows here are editable too.
+
+## Configuration
+
+jiraf reads two files at startup. Both are git-ignored:
+
+| File         | Contents                                                                |
+| ------------ | ----------------------------------------------------------------------- |
+| `.env`       | `JIRA_TOKEN=…`, the only secret (a real environment variable works too) |
+| `jiraf.toml` | everything else. Start from [`jiraf.example.toml`](jiraf.example.toml)  |
+
+Config changes take effect on restart.
+
+### Bubbles
+
+```toml
+[[bubbles]]
+id = "alpha"              # unique; used in the URL (#p=alpha)
+name = "Alpha"            # label in the top bar
+jql = "project = ALPHA"   # any JQL; a trailing ORDER BY is ignored
+icon_project = "ALPHA"    # optional: borrow this Jira project's avatar
+```
+
+- For every bubble, jiraf fetches `(<jql>) AND (statusCategory != Done OR resolved >= -<done_days>d)`,
+  i.e. open issues plus recently closed ones.
+- An issue can belong to several bubbles. It's counted in each.
+- **Complements**: `exclude = ["other-id", …]` subtracts other bubbles, so two filters split a project
+  with no overlap and nothing left out:
+
+  ```toml
+  [[bubbles]]
+  id = "beta"
+  name = "Beta"
+  jql = "project = BETA"
+  exclude = ["beta-core"]   # effective JQL: (project = BETA) AND NOT (<beta-core jql>)
+  ```
+
+  Only the excluded bubble's own `jql` is used (excludes don't chain). jiraf won't start if `exclude`
+  names an unknown bubble or the bubble itself.
+
+### Tabs
+
+Tabs split the tree by the **Initiative Label** of each item's Initiative. Only Initiatives carry that
+label; everything below an Initiative follows it. Tabs appear in the order you list them.
+
+```toml
+[[tabs]]
+id = "road"
+name = "Roadmap"
+match = ["roadmap"]          # case-insensitive substrings of the label
+include_unlabeled = true     # Initiatives without a label land here
+
+[[tabs]]
+id = "sus"
+name = "Sust. & Support"
+match = ["sustainability", "support"]
+issues = ["ABC-123"]         # pin these Initiatives (and their children) here, whatever their label
+```
+
+jiraf picks the tab for each Initiative in this order:
+
+1. A tab listing it in `issues`.
+2. The first tab with a `match` substring found in one of its labels.
+3. If it has no label: the tab with `include_unlabeled = true`.
+4. Otherwise: the **Other** tab.
+
+### Field ids
+
+Custom field ids differ on every Jira instance. List yours with:
+
+```sh
+curl -s -H "Authorization: Bearer $JIRA_TOKEN" https://jira.example.com/rest/api/2/field \
+  | jq -r '.[] | select(.custom) | "\(.id)\t\(.name)"' | sort -k2
+```
+
+| Key                | The field it should point to                                     |
+| ------------------ | ---------------------------------------------------------------- |
+| `extended_status`  | your single-line text follow-up note                             |
+| `initiative_label` | the labels field on Initiatives that drives the tabs             |
+| `parent_link`      | Advanced Roadmaps *Parent Link*                                  |
+| `epic_link`        | *Epic Link*                                                      |
+| `target_start`     | Advanced Roadmaps *Target start* (shown when editing Target end) |
+| `target_end`       | Advanced Roadmaps *Target end* (editable; drives *Late*)         |
+
+### Reference
+
+| Section       | Key                                                  | Default                                   | Description                                                 |
+| ------------- | ---------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
+| `[server]`    | `bind`                                               | `"127.0.0.1:8080"`                        | listen address; keep it on localhost                        |
+|               | `icon_dir`                                           | `"icons"`                                 | local copies of Jira icons; safe to delete                  |
+| `[jira]`      | `url`                                                | *required*                                | base URL, e.g. `https://jira.example.com`                   |
+|               | `cache_seconds`                                      | `60`                                      | how long the dashboard data is kept in memory               |
+| `[fields]`    | *see [Field ids](#field-ids)*                        | instance-specific                         | custom field ids                                            |
+| `[follow_up]` | `stale_days`                                         | `30`                                      | Extended Status older than this counts as "no update"       |
+|               | `done_days`                                          | `14`                                      | closed issues stay visible this long                        |
+|               | `ext_max_len`                                        | `255`                                     | max length of the Extended Status (Jira's text-field limit) |
+|               | `hierarchy`                                          | `["Initiative","Epic","Task","Sub-task"]` | issue types, top first: type toggles and default sort       |
+|               | `initiative_type`                                    | `"Initiative"`                            | the level whose label decides the tab                       |
+|               | `priority_order`                                     | Jira's order                              | display/sort order of priorities                            |
+| `[[tabs]]`    | `id`, `name`, `match`, `include_unlabeled`, `issues` |                                           | see [Tabs](#tabs)                                           |
+| `[[bubbles]]` | `id`, `name`, `jql`, `icon_project`, `exclude`       |                                           | see [Bubbles](#bubbles)                                     |
+
+## Recipe: a bubble that follows a hierarchy
+
+JQL can't say "this issue and everything below it". With ScriptRunner you can chain functions, one
+clause per level. With `I` standing for the Initiative query:
+
+| Clause                                  | Picks up                                          |
+| --------------------------------------- | ------------------------------------------------- |
+| `I`                                     | the matching Initiatives                          |
+| `subtasksOf(I)`                         | Sub-tasks hanging directly off an Initiative      |
+| `portfolioChildrenOf(I)`                | *Parent Link* children: Epics, nested Initiatives |
+| `subtasksOf(portfolioChildrenOf(I))`    | Sub-tasks of those Epics                          |
+| `issuesInEpics(portfolioChildrenOf(I))` | *Epic Link* children: Tasks, Stories…             |
+| `subtasksOf(issuesInEpics(…))`          | Sub-tasks of those                                |
+
+See the `beta-core` bubble in [`jiraf.example.toml`](jiraf.example.toml) for the full query. Notes:
+
+- Write it as a **TOML literal string** (`'''…'''`), so the `\"` needed at the third level of nested
+  quotes is passed to Jira unchanged.
+- `portfolioChildrenOf` goes down **one** level, so Initiatives nested under other Initiatives must match
+  `I` themselves (e.g. carry the same label).
+- Advanced Roadmaps' `issue in childIssuesOf("KEY")` takes only one key and, in testing, skipped
+  Sub-tasks. That's why the recipe uses ScriptRunner.
+- Pair it with `exclude` on the project's catch-all bubble to split the project cleanly.
+
+## How it works
+
+```
+ browser ──HTTP──▶ jiraf (127.0.0.1) ──REST v2 + Bearer token──▶ Jira Data Center
+   ▲  static/index.html, app.js        │  per-bubble searches (parallel, paginated, with changelog)
+   └──────── JSON ◀───────────────────┘  + missing parents, issue types, priorities, avatars
+```
+
+- **One load = one payload.** `GET /api/data` runs every bubble's search in parallel, merges the results
+  (tagging each issue with its bubbles), adds missing ancestors, and returns a compact JSON. The tree,
+  tabs, counters and lists are all computed in the browser from that payload.
+- **Cache**: the payload is kept in memory for `cache_seconds`. **↻** and any edit invalidate it.
+- **Edits** go through jiraf (`POST /api/issue/{key}/…`). After writing, jiraf reads the issue back and
+  returns it, so the page always shows what Jira actually stored.
+- **Icons** (issue types, priorities, project avatars) are proxied by jiraf (`/icon`), fetched with your
+  token, and saved in `icon_dir`. The browser never contacts Jira directly.
+
+### Endpoints
+
+| Method | Path                             | Purpose                                          |
+| ------ | -------------------------------- | ------------------------------------------------ |
+| GET    | `/` , `/app.js`                  | the page                                         |
+| GET    | `/api/data[?refresh=1]`          | the dashboard payload                            |
+| GET    | `/icon?u=<jira path>`            | Jira icon/avatar (allow-listed paths only)       |
+| GET    | `/api/issue/{key}/transitions`   | transitions available for the status menu        |
+| GET    | `/api/issue/{key}/assignable?q=` | assignable users for the assignee menu           |
+| POST   | `/api/issue/{key}/transition`    | `{ "id": "31" }`                                 |
+| POST   | `/api/issue/{key}/priority`      | `{ "name": "Major" }`                            |
+| POST   | `/api/issue/{key}/assignee`      | `{ "name": "jdoe" }` or `{ "name": null }`       |
+| POST   | `/api/issue/{key}/target`        | `{ "date": "2026-12-31" }` or `{ "date": null }` |
+| POST   | `/api/issue/{key}/ext`           | `{ "value": "text" }`                            |
+
+## Security
+
+jiraf holds a token that can edit Jira as you, so it's built to be used only from your own browser:
+
+- **Localhost only**: it binds to `127.0.0.1`.
+- **Host check**: requests whose `Host` header isn't `127.0.0.1`, `localhost` or `[::1]` on the configured
+  port are refused. This blocks DNS-rebinding attacks.
+- **Writes need an `X-Jiraf: 1` header**, and a cross-origin `Origin` is refused. Other websites can't
+  send that header without a CORS preflight, which jiraf never grants.
+- **Input checks**: issue keys are validated before they're used in Jira URLs, and the icon proxy only
+  serves Jira avatar/icon paths.
+- **Content-Security-Policy**: only jiraf's own script runs. Jira text is always inserted as text, never
+  as HTML.
+- **The token stays on the server side.** It's read from `.env` and never sent to the browser.
+
+**Never commit** `.env`, `jiraf.toml` (real URLs, project keys and JQL), `icons/` or `mockup/`. All four are in
+`.gitignore`.
+
+## Development
+
+```sh
+cargo test               # unit tests (config, mapping, JQL helpers, key checks)
+cargo run                # debug build
+RUST_LOG=debug cargo run
+```
+
+```
+src/main.rs      startup, token check, localhost guard, routes
+src/config.rs    jiraf.toml model, defaults, validation, bubble excludes
+src/jira.rs      Jira client, searches, issue mapping, changelog → Extended Status age
+src/api.rs       HTTP handlers, cache, icon store, edits
+static/          index.html (layout + styles) and app.js (rendering + interactions)
+docs/            the mascot
+```
+
+`static/` is compiled into the binary (`include_str!`), so rebuild after changing it. The page and script
+are served with `Cache-Control: no-cache`, so a reload always picks up the new build.
+
+## Troubleshooting
+
+| Symptom                                               | Fix                                                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `JIRA_TOKEN is not set (put it in .env)`              | create `.env` from `.env.example`                                                                |
+| `reading jiraf.toml (start from jiraf.example.toml…)` | `cp jiraf.example.toml jiraf.toml`                                                               |
+| `checking JIRA_TOKEN against Jira` + 401              | token expired or revoked: create a new one                                                       |
+| `field customfield_… (extended_status) not found`     | wrong id in `[fields]`; see [Field ids](#field-ids)                                              |
+| ``bubble `x`: Jira answered 400 …``                   | that bubble's JQL is invalid; test it in Jira's issue search first                               |
+| `issueFunction` errors                                | the JQL uses ScriptRunner functions, which this Jira doesn't have                                |
+| An **Other** tab appears                              | some Initiative labels match no tab: add a `match` substring or pin the Initiative with `issues` |
+| Rows look dimmed                                      | they're parents outside your filters, shown for context (read-only)                              |
+| `Address already in use`                              | jiraf is already running, or change `[server] bind`                                              |
+| Stale or missing icons                                | delete `icons/` and restart                                                                      |
+
+## License
+
+[MIT](LICENSE.md) © 2026 dmbuil

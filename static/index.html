@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jiraf</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#172b4d; --muted:#5e6c84; --line:#e3e6ea; --hover:#f4f6f9;
+  --accent:#2f3fd0; --accent-soft:#e8eaff;
+  --red:#c9372c; --red-soft:#ffeceb; --amber:#a55d00; --amber-soft:#fff4e0; --green:#1f845a; --green-soft:#dcfff1;
+  --blue:#0c66e4; --blue-soft:#e9f2ff; --grey-soft:#eef0f3; --shadow:0 8px 28px rgba(9,30,66,.18);
+}
+/* Dark: follows the OS unless the toggle forces a theme (data-theme on <html>). */
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#16181d; --panel:#1f2228; --ink:#e3e6eb; --muted:#9aa3b2; --line:#2e323a; --hover:#262a31;
+  --accent:#8c9bff; --accent-soft:#2a2f55;
+  --red:#ff8f85; --red-soft:#3d1f1d; --amber:#f5b54a; --amber-soft:#3a2c14; --green:#5fd3a0; --green-soft:#183226;
+  --blue:#7fb2ff; --blue-soft:#1c2b44; --grey-soft:#2a2e36; --shadow:0 8px 28px rgba(0,0,0,.5);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#16181d; --panel:#1f2228; --ink:#e3e6eb; --muted:#9aa3b2; --line:#2e323a; --hover:#262a31;
+  --accent:#8c9bff; --accent-soft:#2a2f55;
+  --red:#ff8f85; --red-soft:#3d1f1d; --amber:#f5b54a; --amber-soft:#3a2c14; --green:#5fd3a0; --green-soft:#183226;
+  --blue:#7fb2ff; --blue-soft:#1c2b44; --grey-soft:#2a2e36; --shadow:0 8px 28px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+:root[data-theme="light"]{color-scheme:light}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+button{font:inherit;color:inherit;cursor:pointer}
+img.ti,img.pi{width:16px;height:16px;flex:none;vertical-align:-3px}
+
+/* top bar */
+.top{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6;height:44px}
+.logo{font-weight:800;letter-spacing:-.5px;font-size:18px}
+.logo span{color:var(--accent)}
+.plan{display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+.plan b{color:var(--ink);font-weight:600}
+.spacer{flex:1}
+.sync{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.dot.busy{background:var(--amber);animation:pulse 1s infinite} .dot.err{background:var(--red)}
+@keyframes pulse{50%{opacity:.3}}
+.refresh{border:1px solid var(--line);background:var(--panel);border-radius:6px;width:28px;height:28px;padding:0;color:var(--muted)}
+.refresh:hover{color:var(--ink);background:var(--hover)}
+.pav.ini{display:grid;place-items:center;background:var(--accent);color:#fff;font-size:10px;font-weight:800}
+.toast.err{background:var(--red);color:#fff}
+.ed.busy,.ext.busy{opacity:.5;pointer-events:none}
+.banner{margin:12px 0;padding:10px 14px;border-radius:8px;background:var(--red-soft);color:var(--red)}
+
+/* project bubbles */
+.team{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0 2px}
+.team::-webkit-scrollbar{display:none}
+.member{display:flex;align-items:center;gap:6px;padding:2px 8px 2px 3px;font-size:13px;border:1px solid var(--line);border-radius:999px;background:var(--panel);white-space:nowrap}
+.member:hover{background:var(--hover)}
+.member.on{border-color:var(--accent);background:var(--accent-soft)}
+.member img,.pav{width:20px;height:20px;border-radius:5px;flex:none}
+.pav.all{font-size:12px}
+.pav.all{display:grid;place-items:center;background:var(--ink);color:var(--panel);font-weight:800}
+.member .nm{font-weight:600}
+.badge{font-size:11px;font-weight:700;padding:0 6px;border-radius:999px;line-height:18px}
+.b-red{background:var(--red-soft);color:var(--red)} .b-amber{background:var(--amber-soft);color:var(--amber)} .b-grey{background:var(--grey-soft);color:var(--muted)}
+
+
+main{max-width:1680px;margin:0 auto;padding:8px 16px}
+.head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:12px}
+.head h1{margin:0;font-size:16px;display:flex;gap:8px;align-items:center;white-space:nowrap}
+.head h1 img{width:22px;height:22px;border-radius:5px}
+.head .jql{font-size:12px;font-weight:400}
+
+.kpis{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.kpi{background:none;border:1px solid transparent;border-radius:6px;padding:2px 8px;display:flex;align-items:baseline;gap:6px}
+.kpi:hover{background:var(--hover)}
+.kpi .v{font-size:15px;font-weight:700}
+.kpi .l{color:var(--muted);font-size:12px}
+.kpi.red .v{color:var(--red)} .kpi.amber .v{color:var(--amber)} .kpi.green .v{color:var(--green)}
+
+.tabs{display:flex;gap:2px;align-self:stretch}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;color:var(--muted);font-weight:600;display:flex;gap:6px;align-items:center}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tab:hover{color:var(--ink)}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.toolbar{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center}
+.toolbar input[type=search]{flex:1;min-width:200px;max-width:420px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.tog{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:4px 8px;font-size:12px;display:inline-flex;gap:5px;align-items:center}
+.tog.on{background:var(--accent-soft);border-color:var(--accent)}
+.tog:not(.on) img{filter:grayscale(1);opacity:.5}
+.sep{width:1px;height:20px;background:var(--line)}
+
+/* tree table */
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{position:sticky;top:44px;background:var(--panel);z-index:2;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line);user-select:none;white-space:nowrap}
+th[data-s]{cursor:pointer} th[data-s]:hover{color:var(--ink)}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.r:hover td{background:var(--hover)}
+tr.ctx td{opacity:.55}
+tr.pg td{background:var(--bg);font-weight:700;padding:8px 10px}
+tr.pg img{width:20px;height:20px;border-radius:4px;vertical-align:-5px;margin-right:6px}
+tr.pg .cnt{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+.issue{display:flex;gap:6px;align-items:flex-start;min-width:0;padding-left:calc(var(--d,0) * 22px)}
+.chev{flex:none;width:18px;height:18px;border:0;background:none;border-radius:4px;color:var(--ink);display:grid;place-items:center;padding:0;font-size:10px;transition:transform .12s}
+.chev:hover:not(:disabled){background:var(--grey-soft)}
+.chev.open{transform:rotate(90deg)}
+.chev:disabled{color:var(--line);cursor:default}
+.issue img.ti{margin-top:1px}
+.key{font-weight:600;font-size:12px;white-space:nowrap;margin-top:1px}
+.sum{min-width:0}
+.lbl{display:table;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-top:3px;font-weight:400}
+.kids{color:var(--muted);font-size:11px;white-space:nowrap;margin-top:2px}
+
+/* editable cells */
+.ed{border:1px solid transparent;background:none;border-radius:6px;padding:1px 4px;margin:-2px -5px;text-align:left;display:inline-flex;align-items:center;gap:4px;max-width:100%}
+.ed:hover{border-color:var(--line);background:var(--panel)}
+/* icon-only edit button (priority): hug the icon so the hover box is centred on it */
+.ed.ico{padding:2px;margin:-3px 0;max-width:none}
+.ed.ico .pr{display:block;line-height:0}
+td.c-pr,th.c-pr{text-align:center;padding-left:4px;padding-right:4px}
+/* comment bubble: keep clear of the table's right edge */
+td.c-cm{text-align:right;padding-right:12px}
+td.c-st,th.c-st{padding-left:8px;padding-right:4px}
+/* status: the pill itself is the control (hover outline), no caret, hugging the pill */
+.ed.tight{padding:1px 3px;margin:-2px -4px;max-width:none}
+.ed .caret{opacity:0;font-size:9px;color:var(--muted)}
+.ed:hover .caret{opacity:1}
+.ed.edited{box-shadow:inset 3px 0 0 var(--accent)}
+.st{font-size:10.5px;font-weight:700;letter-spacing:.01em;text-transform:uppercase;padding:1px 5px;border-radius:4px;white-space:nowrap;display:inline-block}
+.s-todo{background:var(--grey-soft);color:var(--muted)} .s-prog{background:var(--blue-soft);color:var(--blue)} .s-block{background:var(--red-soft);color:var(--red)} .s-done{background:var(--green-soft);color:var(--green)}
+.pr{font-size:12px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+.who{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.tgt{font-size:12px;white-space:nowrap} .tgt.bad{color:var(--red);font-weight:600} .tgt.none{color:var(--muted)}
+
+.ext{display:flex;gap:6px;align-items:flex-start;border-radius:6px;padding:2px 4px;margin:-2px -4px;cursor:text}
+.ext:hover{background:var(--grey-soft)}
+.ext .txt{flex:1;min-width:0}
+.ext .pen{opacity:0;color:var(--muted);font-size:12px}
+.ext:hover .pen{opacity:1}
+.ext.edited{box-shadow:inset 3px 0 0 var(--accent)}
+.age{flex:none;font-size:11px;font-weight:700;padding:0 6px;border-radius:4px;white-space:nowrap;line-height:18px;margin-top:1px}
+.a-fresh{background:var(--green-soft);color:var(--green)} .a-warn{background:var(--amber-soft);color:var(--amber)} .a-old{background:var(--red-soft);color:var(--red)} .a-none{background:var(--grey-soft);color:var(--muted)}
+.editor{display:flex;flex-direction:column;gap:6px}
+.editor textarea{width:100%;min-height:64px;resize:vertical;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit;font-size:13px}
+.editor .bar{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.editor .bar .cnt.over{color:var(--red);font-weight:700}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:3px 10px;font-size:12px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* dropdown menu */
+.menu{position:fixed;z-index:25;min-width:220px;max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:4px;display:none}
+.menu.on{display:block}
+.menu .mh{font-size:11px;color:var(--muted);padding:4px 8px 6px;text-transform:uppercase;letter-spacing:.04em}
+.menu button.opt{display:flex;width:100%;gap:8px;align-items:center;border:0;background:none;padding:6px 8px;border-radius:5px;text-align:left}
+.menu button.opt:hover,.menu button.opt:focus{background:var(--hover);outline:none}
+.menu button.opt.cur{font-weight:700}
+.menu button.opt.cur::after{content:"✓";margin-left:auto;color:var(--accent)}
+.menu input[type=date]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.menu .row{display:flex;gap:6px;padding:6px 4px 2px}
+
+/* comment bubble + popover */
+.cm{border:0;background:none;padding:2px 4px;border-radius:6px;color:var(--muted);display:inline-flex;gap:3px;align-items:center;font-size:12px}
+.cm:hover,.cm:focus{background:var(--grey-soft);color:var(--ink);outline:none}
+.cm.none{opacity:.3;cursor:default}
+.pop{position:fixed;z-index:20;width:min(520px,90vw);max-height:60vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:12px 14px;display:none}
+.pop.on{display:block}
+.pop .h{font-size:12px;color:var(--muted);margin-bottom:8px}
+.pop .h b{color:var(--ink)}
+.pop .muted{color:var(--muted);font-style:italic}
+.pop .b{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}
+.pop .f{margin-top:10px;font-size:12px}
+
+/* attention tab */
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.card>h2{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+.card>h2 .n{margin-left:auto}
+.it{padding:9px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.it:last-child{border-bottom:0}
+.it .l1{display:flex;gap:8px;align-items:flex-start}
+.it .l1 .issue{flex:1}
+.it .ctxl{color:var(--muted);font-size:12px;padding-left:24px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.it .l3{padding-left:24px;display:flex;gap:12px;align-items:flex-start}
+.it .l3 .ext{flex:1}
+.empty{padding:14px;color:var(--muted);font-style:italic}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:10px 14px;border-radius:8px;font-size:12px;box-shadow:var(--shadow);max-width:min(760px,92vw);display:none;z-index:30}
+.toast.on{display:block}
+.toast code{font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
+footer{color:var(--muted);font-size:12px;text-align:center;padding:24px}
+@media (max-width: 1000px){ .grid{grid-template-columns:1fr} .hint{display:none} .kpis{margin-left:0} .c-who,.c-tgt{display:none} }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="logo">j<span>i</span>raf</div>
+  <nav class="team" id="team"></nav>
+  <div class="sync" id="sync" title="Live from Jira"><span class="dot" id="dot"></span><span id="now">loading…</span></div>
+  <button class="refresh" id="theme" title="Theme"></button>
+  <button class="refresh" id="refresh" title="Reload from Jira (bypasses the cache)">↻</button>
+</header>
+
+<main>
+  <div class="head">
+    <h1 id="who"></h1>
+    <div class="tabs">
+      <span id="treeTabs" style="display:contents"></span>
+      <button class="tab" data-tab="att">Needs attention <span class="badge b-red" id="nAtt"></span></button>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </div>
+
+  <section id="v-scope" class="card">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Filter by key, summary, assignee, status note…">
+      <span id="typeTogs" style="display:inline-flex;gap:4px"></span>
+      <span class="sep"></span>
+      <button class="tog" id="doneTog">+ closed</button>
+      <span class="spacer"></span>
+      <button class="tog" id="expAll">Expand all</button>
+      <button class="tog" id="colAll">Collapse all</button>
+    </div>
+    <table>
+      <colgroup id="cols"></colgroup>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+
+  <section id="v-att" class="grid" hidden></section>
+</main>
+<footer>Stateless: every view is built from a live Jira query and every edit goes straight back to Jira. Bubbles, tabs and thresholds come from <code>jiraf.toml</code>.</footer>
+
+<div class="pop" id="pop"></div>
+<div class="menu" id="menu"></div>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
