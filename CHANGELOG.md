@@ -12,6 +12,7 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ### Fixed
 
+- The gear on the Settings button is centred (an icon now, instead of a font character).
 - On macOS 26 the app icon showed small, inside a gray frame. The artwork now fills Apple's
   rounded-square icon shape, so macOS shows it as is.
 
