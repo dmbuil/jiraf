@@ -4,11 +4,19 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-19
+
+First release with ready-made builds for macOS and Windows.
+
 ### Added
 
 - **Windows and Intel Mac builds.** A GitHub workflow tests jiraf on macOS and Windows and builds a
   universal macOS `.dmg` and a Windows installer (`.exe` and `.msi`). Release builds are attached to
   the GitHub release.
+
+### Fixed
+
+- jiraf builds on Windows without warnings (`cargo clippy` is clean there too).
 
 ## [0.2.0] - 2026-10-19
 
@@ -88,6 +96,7 @@ server and opened in the browser.
 - Assignee avatars and Jira icons cached locally.
 - Light and dark themes.
 
-[Unreleased]: https://github.com/dmbuil/jiraf/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dmbuil/jiraf/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/dmbuil/jiraf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dmbuil/jiraf/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dmbuil/jiraf/releases/tag/v0.1.0
