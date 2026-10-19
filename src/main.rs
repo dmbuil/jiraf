@@ -5,6 +5,7 @@
 //! [`local_only`]. All Jira traffic goes through [`jira`].
 
 mod api;
+mod app;
 mod config;
 mod jira;
 
@@ -46,31 +47,11 @@ async fn local_only(req: ServiceRequest, next: Next<impl MessageBody>) -> Result
 async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,actix_server=warn")).init();
 
-    let dir = std::env::current_dir()?;
-    config::ensure_dir(&dir)?;
-    let cfg = config::Config::load(&dir)?;
-    let jira = jira::Jira::new(&cfg)?;
-
-    let me = jira.get("/rest/api/2/myself").await.context("checking JIRA_TOKEN against Jira")?;
-    log::info!("connected to {} as {}", jira.base(), me["displayName"].as_str().unwrap_or("?"));
-    let names = jira::field_names(&jira).await?;
-    let ext_field_name = names
-        .get(&cfg.fields.extended_status)
-        .cloned()
-        .with_context(|| format!("field {} (extended_status) not found in Jira", cfg.fields.extended_status))?;
-
-    let bind = cfg.server.bind.clone().unwrap_or_else(|| "127.0.0.1:8080".into());
-    let icon_dir = cfg.icon_dir.clone();
+    let st = app::init(&std::env::current_dir()?).await?;
+    let bind = st.cfg.server.bind.clone().unwrap_or_else(|| "127.0.0.1:8080".into());
     let port = bind.rsplit(':').next().unwrap_or("8080").to_string();
     let hosts: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
-    let state = web::Data::new(api::AppState {
-        cfg,
-        jira,
-        ext_field_name,
-        icon_dir,
-        cache: Default::default(),
-        icons: Default::default(),
-    });
+    let state = web::Data::new(st);
 
     log::info!("jiraf on http://{bind}/");
     HttpServer::new(move || {

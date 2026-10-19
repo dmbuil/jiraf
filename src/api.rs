@@ -95,7 +95,7 @@ impl std::fmt::Display for BadRequest {
 impl std::error::Error for BadRequest {}
 
 /// A `400 Bad Request` [`ApiError`] with the given message.
-fn bad(msg: impl Into<String>) -> ApiError {
+pub fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(BadRequest(msg.into()).into())
 }
 
