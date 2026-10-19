@@ -63,9 +63,10 @@ Users: the author, on their own Mac (Windows build planned). Same as the app.
 
 ## Anti-goals (failure even if it "works")
 
-- **Losing what is in the files**: saving must keep `jiraf.toml`'s comments, formatting, key order
-  and untouched keys (including `icon_dir`, `bind`), and every other line of `.env` (e.g. `RUST_LOG`).
-  Only the values that changed are rewritten. (My call; the user has a 110-line commented file.)
+- **Losing settings**: a save must keep every value in `jiraf.toml` (including a non-default
+  `icon_dir`) and every other line of `.env` (e.g. `RUST_LOG`). Comments are *not* kept: the file is
+  rewritten clean (user's choice), and their explanations move into the form as tooltips (see
+  "Help text").
 - The token ever reaching the page (in `app_status`, a settings payload, a log line or an error).
 - A save that leaves a half-written file: write to a temp file in the same folder and rename.
 - Breaking a hand-edited file: the files stay the source of truth and hand edits keep working.
@@ -89,10 +90,12 @@ Users: the author, on their own Mac (Windows build planned). Same as the app.
   `firstRun: true`. If it doesn't parse, it returns the parse error and the screen shows it with
   the folder path (the user fixes the file by hand, or chooses to start from defaults). Starting
   from defaults first copies the broken file to `jiraf.toml.bak` (my call), then writes a new one.
-- Write: edit the existing document with the `toml_edit` crate so comments and layout survive;
-  arrays of tables (`[[tabs]]`, `[[bubbles]]`) are rewritten entry by entry, keeping comments
-  attached to entries that still exist. A brand-new file starts from `jiraf.example.toml`'s layout
-  with its example bubbles/tabs removed.
+- Write: serialize the whole config as a **clean file** (user's choice): sections in the
+  `jiraf.example.toml` order, a one-line header saying the file is written by jiraf's Settings, no
+  other comments. Multi-line JQL is written as a literal `'''` string so it round-trips unchanged.
+  `icon_dir` is written only if it differs from the default; `bind` is dropped (it is ignored).
+  Before each write the previous `jiraf.toml` is copied to `jiraf.toml.bak` (my call: the first
+  Settings save replaces the user's commented, hand-written file).
 - `.env`: replace (or append) the `JIRA_TOKEN=` line only; leave every other line as is.
 - Validate before writing, using the same rules as `Config::load` plus the Jira checks, so a saved
   config always loads.
@@ -101,6 +104,14 @@ Users: the author, on their own Mac (Windows build planned). Same as the app.
   `.env`. In that case (my call) Replace still checks the pasted token and writes it to `.env`, and
   Settings notes that the environment token is the one in use until it is unset. The error screen's
   token box is not offered when the failing token came from the environment.
+
+### Help text (user's request)
+
+Every field has an ⓘ tooltip saying how to fill it in, carrying over what the comments in
+`jiraf.example.toml` explain today (e.g. Extended Status id: "single-line text: the follow-up note";
+stale days: "an Extended Status older than this counts as no update"; Activity Types: whole values,
+case and accents ignored; where to find field ids: `GET /rest/api/2/field`; where to get a token:
+Jira > Profile > Personal Access Tokens). The example file keeps its comments for hand editing.
 
 ### Ids (my call)
 
