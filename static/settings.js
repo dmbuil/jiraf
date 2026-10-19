@@ -88,7 +88,7 @@ function renderSettings() {
       <div class="cf-2">${field(`bubbles.${i}.icon_project`, 'Icon project', `<input type="text" data-k="bubbles.${i}.icon_project" data-opt value="${esc(b.icon_project || '')}" placeholder="e.g. ABC" spellcheck="false">`)}
       <div class="cf-f"><span class="cf-l">Exclude${hlp(`bubbles.${i}.exclude`)}</span><div class="cf-chips">${ex}</div>${msgs(`bubbles.${i}.exclude`)}</div></div></div>`;
   }).join('');
-  const file = `<p class="cf-intro cf-file">Edit the original <a href="#" id="cfOpenFile">jiraf.toml</a> file</p>`;
+  const file = `<div class="cf-file"><button type="button" class="tog" id="cfOpenFile" title="Edit the file by hand">Open jiraf.toml</button></div>`;
   setSec.innerHTML = `${file}${banner}
     <section class="card"><h2>Jira</h2>
       ${field('jira.url', 'URL', text('jira.url', c.jira.url, 'https://jira.example.com'))}
@@ -204,11 +204,8 @@ setSec.addEventListener('keydown', e => {
   setSec.querySelector(`[data-add="${el.dataset.add}"]`)?.focus();
 });
 setSec.addEventListener('click', e => {
-  if (e.target.closest('#cfOpenFile')) {
-    e.preventDefault();
-    return api('open_config_file').catch(err => toast(esc(err.message), true));
-  }
   const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'cfOpenFile') return api('open_config_file').catch(err => toast(esc(err.message), true));
   const d = b.dataset, swap = (arr, i, j) => { if (j >= 0 && j < arr.length) [arr[i], arr[j]] = [arr[j], arr[i]]; };
   if (b.id === 'cfSave') return saveSettings();
   if (b.id === 'cfCancel') return closeSettings();
