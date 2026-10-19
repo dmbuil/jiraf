@@ -1,4 +1,8 @@
 //! jiraf: a lean, stateless follow-up dashboard over Jira (Data Center) Plans.
+//!
+//! Startup: load `.env` and `jiraf.toml` ([`config`]), check the token against Jira, resolve the
+//! Extended Status field name, then serve the page and JSON API ([`api`]) on localhost, guarded by
+//! [`local_only`]. All Jira traffic goes through [`jira`].
 
 mod api;
 mod config;
@@ -35,6 +39,10 @@ async fn local_only(req: ServiceRequest, next: Next<impl MessageBody>) -> Result
     next.call(req).await
 }
 
+/// Entry point: `jiraf [path/to/jiraf.toml]` (defaults to `./jiraf.toml`).
+///
+/// # Errors
+/// Fails fast on a bad config, an invalid token, an unknown Extended Status field id, or a busy port.
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -77,11 +85,13 @@ async fn main() -> anyhow::Result<()> {
             .service(api::icon)
             .service(api::data)
             .service(api::transitions)
+            .service(api::priorities)
             .service(api::assignable)
             .service(api::set_ext)
             .service(api::set_priority)
             .service(api::set_assignee)
             .service(api::set_target)
+            .service(api::set_due)
             .service(api::transition)
     })
     .bind(&bind)

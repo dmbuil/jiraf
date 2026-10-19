@@ -19,6 +19,7 @@ const ddmm = d => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth
 const extAge = i => i.extAt ? days(i.extAt) : null;
 const freshness = i => isDone(i) ? 0 : (extAge(i) ?? (i.upd ? days(i.upd) : 0));
 const late = i => !isDone(i) && i.te && days(i.te) > 0;
+const overdue = i => !isDone(i) && i.due && days(i.due) > 0;
 const stale = i => !isDone(i) && freshness(i) > FU.stale_days;
 const recentDone = i => isDone(i) && i.res && days(i.res) <= FU.done_days;
 const stClass = (name, cat) => /blocked/i.test(name) ? 's-block' : cat === 'done' ? 's-done' : cat === 'indeterminate' ? 's-prog' : 's-todo';
@@ -31,13 +32,23 @@ const mark = (i, f) => (edited[i.k] ??= new Set()).add(f);
 const isEd = (i, f) => edited[i.k]?.has(f) ? 'edited' : '';
 const keyLink = i => `<a class="key" href="${esc(D.jiraBase)}/browse/${esc(i.k)}" target="_blank">${esc(i.k)}</a>`;
 
+// Activity Type values compare whole, ignoring case and accents ("Evolucion tecnologica" = "Evolución Tecnológica").
+const norm = v => (v || '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
 function streamOf(i) {
-  const ini = i.t === FU.initiative_type ? i : ancestors(i).find(a => a.t === FU.initiative_type), ls = (ini?.il || []).map(l => l.toLowerCase());
-  const pinned = ini && STREAMS.find(s => s.issues.includes(ini.k));
+  // root first: the top-most Activity Type wins, so a whole tree (Initiative and below) lives in one tab
+  const line = [...ancestors(i), i];
+  const pinned = STREAMS.find(s => line.some(a => s.issues.includes(a.k)));
   if (pinned) return pinned.id;
-  for (const s of STREAMS) if (ls.some(l => s.match.some(m => l.includes(m))) || (s.include_unlabeled && !ls.length)) return s.id;
+  const at = norm(line.find(a => a.at)?.at);
+  for (const s of STREAMS) if (at ? s.activity_types.includes(at) : s.include_unset) return s.id;
   return 'other';
 }
+// Plain Jira labels under the summary: the first LBL_MAX as chips, the rest behind a "+N" chip with a hover list.
+const LBL_MAX = 2;
+// Each label chip opens a Jira search for `labels = "<label>"` in a new tab.
+const lblJql = l => `labels = "${l.replace(/["\\]/g, '\\$&')}"`;
+const lblChip = l => `<a class="lbl" href="${esc(D.jiraBase)}/issues/?jql=${encodeURIComponent(lblJql(l))}" target="_blank" title="Search Jira: ${esc(lblJql(l))}">${esc(l)}</a>`;
+const labels = i => !i.lb?.length ? '' : `<span class="lbls">${i.lb.slice(0, LBL_MAX).map(lblChip).join('')}${i.lb.length > LBL_MAX ? `<span class="lbl more" data-lb="${esc(i.k)}" tabindex="0">+${i.lb.length - LBL_MAX}</span>` : ''}</span>`;
 const isTreeTab = t => t !== 'att';
 
 /* ---------- server calls ---------- */
@@ -72,8 +83,15 @@ function priCell(i) {
 function tgtCell(i) {
   if (i.ctx) return '';
   const t = i.te;
-  const lab = t ? `<span class="tgt ${late(i) ? 'bad' : ''}">${fmt(t)}${late(i) ? ` · ${days(t)}d late` : ''}</span>` : '<span class="tgt none">—</span>';
+  // the "Nd late" warning goes on its own line under the date
+  const lab = t ? `<span class="tgt ${late(i) ? 'bad' : ''}">${fmt(t)}${late(i) ? `<span class="late">${days(t)}d late</span>` : ''}</span>` : '<span class="tgt none">—</span>';
   return `<button class="ed ${isEd(i, 'target')}" data-menu="target" data-k="${esc(i.k)}" title="Target end${i.ts ? ` (start ${fmt(i.ts)})` : ''}">${lab}<span class="caret">▼</span></button>`;
+}
+// Jira's own Due date: editable, red once it has passed on an open issue.
+function dueCell(i) {
+  if (i.ctx) return '';
+  const lab = i.due ? `<span class="tgt ${overdue(i) ? 'bad' : ''}">${fmt(i.due)}</span>` : '<span class="tgt none">—</span>';
+  return `<button class="ed ${isEd(i, 'due')}" data-menu="due" data-k="${esc(i.k)}" title="Due date${overdue(i) ? `: ${days(i.due)}d overdue` : ''}">${lab}<span class="caret">▼</span></button>`;
 }
 function ageChip(i) {
   if (isDone(i)) return `<span class="age a-fresh">closed ${fmt(i.res)}</span>`;
@@ -86,10 +104,18 @@ function extCell(i) {
   if (i.ctx) return '';
   return `<div class="ext ${isEd(i, 'ext')}" data-edit="${esc(i.k)}" title="Click to edit Extended Status">${ageChip(i)}<span class="txt">${i.ext ? esc(i.ext) : '<i style="color:var(--muted)">No status note</i>'}</span><span class="pen">✎</span></div>`;
 }
+// Avatar of a user: Jira's picture when Jira hosts it, else initials on a colour derived from the name.
+function avatar(name, url) {
+  if (!name) return `<span class="av none">?</span>`;
+  if (url) return `<img class="av" src="${esc(url)}" alt="">`;
+  const ini = title(name).split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const hue = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return `<span class="av ini" style="--h:${hue}">${esc(ini)}</span>`;
+}
 function whoCell(i) {
-  const lab = i.a ? esc(title(i.a)) : '<span style="color:var(--muted)">Unassigned</span>';
-  return i.ctx ? `<span class="who">${lab}</span>`
-    : `<button class="ed ${isEd(i, 'assignee')}" data-menu="assignee" data-k="${esc(i.k)}" title="Change assignee" style="width:100%"><span class="who">${lab}</span><span class="caret">▼</span></button>`;
+  const who = i.a ? title(i.a) : 'Unassigned';
+  return i.ctx ? `<span class="who-av" title="${esc(who)}">${avatar(i.a, i.av)}</span>`
+    : `<button class="ed ico ${isEd(i, 'assignee')}" data-menu="assignee" data-k="${esc(i.k)}" title="${esc(who)}: click to change" aria-label="Assignee: ${esc(who)}">${avatar(i.a, i.av)}</button>`;
 }
 const cmBtn = i => i.ctx ? '' : i.nc
   ? `<button class="cm" data-cm="${esc(i.k)}" aria-label="${i.nc} comments, show the last one">💬<span>${i.nc}</span></button>`
@@ -105,8 +131,31 @@ function renderTeam() {
   document.getElementById('team').innerHTML = chip(ALL, 'All', items, '<span class="pav all">∗</span>')
     + D.bubbles.map(b => chip(b.id, b.name, items.filter(i => i.bubbles.includes(b.id)), bubIcon(b))).join('');
   document.querySelectorAll('.member').forEach(b => b.onclick = () => select(b.dataset.p));
-  document.querySelector('.member.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  updateScrl();   // first: showing the arrows narrows the strip
+  // centre the selected bubble, so it never sits under an edge fade
+  const on = document.querySelector('.member.on');
+  if (on) team.scrollLeft = on.offsetLeft - team.offsetLeft - (team.clientWidth - on.offsetWidth) / 2;
+  updateScrl();
 }
+/* ‹ › buttons and mouse wheel for the bubble strip (horizontal scrolling is awkward with a plain mouse) */
+const team = document.getElementById('team');
+function updateScrl() {
+  const max = team.scrollWidth - team.clientWidth;
+  document.getElementById('scrl').hidden = max <= 1;
+  document.getElementById('scrlL').disabled = team.scrollLeft <= 1;
+  document.getElementById('scrlR').disabled = team.scrollLeft >= max - 1;
+  team.classList.toggle('more-l', team.scrollLeft > 1);
+  team.classList.toggle('more-r', team.scrollLeft < max - 1);
+}
+const scrollTeam = dir => team.scrollBy({ left: dir * Math.max(120, team.clientWidth * 0.7), behavior: 'smooth' });
+document.getElementById('scrlL').onclick = () => scrollTeam(-1);
+document.getElementById('scrlR').onclick = () => scrollTeam(1);
+team.addEventListener('scroll', updateScrl, { passive: true });
+addEventListener('resize', updateScrl);
+team.addEventListener('wheel', e => {
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || team.scrollWidth <= team.clientWidth) return;
+  e.preventDefault(); team.scrollLeft += e.deltaY;
+}, { passive: false });
 function buckets() {
   const its = scopeItems(), open = its.filter(i => !isDone(i));
   return {
@@ -135,7 +184,7 @@ function renderHead() {
   const nOther = open.filter(i => i.stream === 'other').length;
   document.getElementById('treeTabs').innerHTML = STREAMS.map(s =>
     `<button class="tab ${state.tab === s.id ? 'on' : ''}" data-tab="${esc(s.id)}">${esc(s.name)} <span class="badge b-grey">${open.filter(i => i.stream === s.id).length}</span></button>`).join('')
-    + (nOther || state.tab === 'other' ? `<button class="tab ${state.tab === 'other' ? 'on' : ''}" data-tab="other" title="Initiative Label matches no tab rule in jiraf.toml">Other <span class="badge b-grey">${nOther}</span></button>` : '');
+    + (nOther || state.tab === 'other' ? `<button class="tab ${state.tab === 'other' ? 'on' : ''}" data-tab="other" title="Activity Type matches no tab in jiraf.toml">Other <span class="badge b-grey">${nOther}</span></button>` : '');
   document.querySelectorAll('.tab').forEach(t => { t.classList.toggle('on', t.dataset.tab === state.tab); t.onclick = () => setTab(t.dataset.tab); });
 }
 
@@ -144,15 +193,16 @@ const COLS = () => [
   { id: 'issue', label: 'Issue', w: 'auto', sort: i => +i.k.split('-')[1] },
   { id: 'st', label: 'Status', w: '100px', cls: 'c-st', sort: ST_RANK },
   { id: 'pr', label: 'P', title: 'Priority', w: '44px', cls: 'c-pr', sort: i => PRI_RANK[i.pr] ?? 99 },
-  { id: 'who', label: 'Assignee', w: '140px', cls: 'c-who', sort: i => i.a || '~' },
-  { id: 'tgt', label: 'Target end', w: '128px', cls: 'c-tgt', sort: i => i.te || '9' },
+  { id: 'who', label: 'Who', title: 'Assignee', w: '52px', cls: 'c-who', sort: i => i.a || '~' },
+  { id: 'tgt', label: 'Target end', w: '104px', cls: 'c-tgt', sort: i => i.te || '9' },
+  { id: 'due', label: 'Due', w: '84px', cls: 'c-due', sort: i => i.due || '9' },
   { id: 'ext', label: 'Extended status', w: '36%', sort: i => -freshness(i) },
   { id: 'cm', label: '', w: '64px', cls: 'c-cm' },
 ];
 function matches(i) {
   if (!state.types.has(i.t) && TYPE_ORDER.includes(i.t)) return false;
   if (isDone(i) && !(state.done && recentDone(i))) return false;
-  return !state.q || (i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '')).toLowerCase().includes(state.q);
+  return !state.q || (i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '') + ' ' + (i.lb || []).join(' ')).toLowerCase().includes(state.q);
 }
 function buildTree() {
   // shown = matching items + their ancestors (ancestors of a hidden type are skipped; children attach higher up)
@@ -186,9 +236,9 @@ function renderScope() {
   const row = (i, d) => {
     const ch = kids[i.k] || [], open = !state.collapsed.has(i.k), total = (children[i.k] || []).length;
     let h = `<tr class="r ${i.ctx ? 'ctx' : ''}">${cols.map(c => `<td class="${c.cls || ''}">${
-      c.id === 'issue' ? `<div class="issue" style="--d:${d}"><button class="chev ${ch.length && open ? 'open' : ''}" data-tg="${esc(i.k)}" ${ch.length ? '' : 'disabled'} title="${ch.length ? (open ? 'Collapse' : 'Expand') + ` (${ch.length} shown${total > ch.length ? ` of ${total}` : ''})` : 'No children'}">▶</button>${typeIcon(i.t)}${keyLink(i)}<span class="sum">${esc(i.s)}${i.t === FU.initiative_type && i.il?.length ? `<span class="lbl" title="Initiative Label">${esc(i.il.join(', '))}</span>` : ''}</span>${ch.length && !open ? `<span class="kids">+${ch.length}</span>` : ''}</div>`
+      c.id === 'issue' ? `<div class="issue" style="--d:${d}"><button class="chev ${ch.length && open ? 'open' : ''}" data-tg="${esc(i.k)}" ${ch.length ? '' : 'disabled'} title="${ch.length ? (open ? 'Collapse' : 'Expand') + ` (${ch.length} shown${total > ch.length ? ` of ${total}` : ''})` : 'No children'}">▶</button>${typeIcon(i.t)}${keyLink(i)}<span class="sum">${esc(i.s)}${labels(i)}</span>${ch.length && !open ? `<span class="kids">+${ch.length}</span>` : ''}</div>`
       : c.id === 'st' ? statusCell(i) : c.id === 'pr' ? priCell(i) : c.id === 'who' ? whoCell(i)
-      : c.id === 'tgt' ? tgtCell(i) : c.id === 'ext' ? extCell(i) : cmBtn(i)}</td>`).join('')}</tr>`;
+      : c.id === 'tgt' ? tgtCell(i) : c.id === 'due' ? dueCell(i) : c.id === 'ext' ? extCell(i) : cmBtn(i)}</td>`).join('')}</tr>`;
     if (open) h += ch.sort(cmp).map(c => row(c, d + 1)).join('');
     return h;
   };
@@ -292,7 +342,13 @@ document.addEventListener('click', async e => {
     menu.querySelectorAll('.opt').forEach(o => o.onclick = () => { closeMenu(); save(i, 'status', 'transition', { id: o.dataset.id }, b, `status → ${esc(o.dataset.to)}`); });
   }
   if (kind === 'priority') {
-    openMenu(b, `<div class="mh">Priority</div>` + D.priorities.map(p => `<button class="opt ${p.name === i.pr ? 'cur' : ''}" data-v="${esc(p.name)}">${priIcon(p.name)}${esc(p.name)}</button>`).join(''));
+    // only the priorities this issue's project allows (priority schemes), in the configured order
+    openMenu(b, `<div class="mh">Priority</div><div class="empty">Loading…</div>`);
+    let allowed;
+    try { allowed = new Set(await api(`/api/issue/${encodeURIComponent(i.k)}/priorities`)); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+    const opts = D.priorities.filter(p => allowed.has(p.name));
+    menu.innerHTML = `<div class="mh">Priority</div>` + (opts.map(p => `<button class="opt ${p.name === i.pr ? 'cur' : ''}" data-v="${esc(p.name)}">${priIcon(p.name)}${esc(p.name)}</button>`).join('') || '<div class="empty">No priorities available.</div>');
+    placeMenu(b); menu.querySelector('.opt')?.focus();
     menu.querySelectorAll('.opt').forEach(o => o.onclick = () => { closeMenu(); const n = o.dataset.v; if (n === i.pr) return; save(i, 'priority', 'priority', { name: n }, b, `priority → ${esc(n)}`); });
   }
   if (kind === 'assignee') {
@@ -305,7 +361,7 @@ document.addEventListener('click', async e => {
       try { users = await api(`/api/issue/${encodeURIComponent(i.k)}/assignable?q=${encodeURIComponent(q)}`); } catch (err) { lst.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
       if (my !== seq) return;   // a newer search is on its way
       const opts = [...(q && !'unassigned'.includes(q.toLowerCase()) ? [] : [{ name: '', displayName: null }]), ...users];
-      lst.innerHTML = opts.map(u => `<button class="opt ${(u.name || null) === (i.an || null) ? 'cur' : ''}" data-v="${esc(u.name)}" data-d="${esc(u.displayName || '')}">${u.displayName ? esc(title(u.displayName)) : '<i>Unassigned</i>'}</button>`).join('') || '<div class="empty">Nobody matches.</div>';
+      lst.innerHTML = opts.map(u => `<button class="opt ${(u.name || null) === (i.an || null) ? 'cur' : ''}" data-v="${esc(u.name)}" data-d="${esc(u.displayName || '')}">${avatar(u.displayName, u.avatar)}${u.displayName ? esc(title(u.displayName)) : '<i>Unassigned</i>'}</button>`).join('') || '<div class="empty">Nobody matches.</div>';
       lst.querySelectorAll('.opt').forEach(o => o.onclick = () => {
         closeMenu(); const n = o.dataset.v || null; if (n === (i.an || null)) return;
         save(i, 'assignee', 'assignee', { name: n }, b, n ? `assigned to ${esc(title(o.dataset.d))}` : 'unassigned');
@@ -315,11 +371,12 @@ document.addEventListener('click', async e => {
     inp.oninput = () => { clearTimeout(timer); timer = setTimeout(() => search(inp.value.trim()), 250); };
     inp.onkeydown = ev => { if (ev.key === 'Enter') lst.querySelector('.opt')?.click(); };
   }
-  if (kind === 'target') {
-    openMenu(b, `<div class="mh">Target end${i.ts ? ` · start ${fmt(i.ts)}` : ''}</div><div style="padding:0 4px"><input type="date" value="${esc(i.te || '')}"></div>
+  if (kind === 'target' || kind === 'due') {
+    const [cur, name] = kind === 'target' ? [i.te, 'Target end'] : [i.due, 'Due date'];
+    openMenu(b, `<div class="mh">${name}${kind === 'target' && i.ts ? ` · start ${fmt(i.ts)}` : ''}</div><div style="padding:0 4px"><input type="date" value="${esc(cur || '')}"></div>
       <div class="row"><button class="btn primary" data-ok>Save</button><button class="btn" data-clr>Clear</button><button class="btn" data-x>Cancel</button></div>`);
     const inp = menu.querySelector('input');
-    const set = v => { closeMenu(); if ((v || null) === (i.te || null)) return; save(i, 'target', 'target', { date: v || null }, b, v ? `target end → ${fmt(v)}` : 'target end cleared'); };
+    const set = v => { closeMenu(); if ((v || null) === (cur || null)) return; save(i, kind, kind, { date: v || null }, b, v ? `${name.toLowerCase()} → ${fmt(v)}` : `${name.toLowerCase()} cleared`); };
     menu.querySelector('[data-ok]').onclick = () => set(inp.value);
     menu.querySelector('[data-clr]').onclick = () => set(null);
     menu.querySelector('[data-x]').onclick = closeMenu;
@@ -331,9 +388,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu();
 /* ---------- last-comment popover (comment comes with the data) ---------- */
 const pop = document.getElementById('pop'); let hideT;
 function showPop(btn) {
-  const i = byKey[btn.dataset.cm]; if (!i?.c) return;
+  const i = byKey[btn.dataset.cm || btn.dataset.lb]; if (!i || (btn.dataset.cm && !i.c)) return;
   clearTimeout(hideT);
-  pop.innerHTML = `<div class="h"><b>${esc(title(i.c.a))}</b> · ${fmt(i.c.d)} · last of ${i.nc} comment${i.nc > 1 ? 's' : ''}</div>
+  pop.classList.toggle('lb', !!btn.dataset.lb);
+  pop.innerHTML = btn.dataset.lb ? `<div class="h"><b>${i.lb.length} labels</b> · ${esc(i.k)}</div><div class="lbls">${i.lb.map(lblChip).join('')}</div>` : `<div class="h"><b>${esc(title(i.c.a))}</b> · ${fmt(i.c.d)} · last of ${i.nc} comment${i.nc > 1 ? 's' : ''}</div>
     <div class="b">${esc(i.c.b)}</div>
     <div class="f"><a href="${esc(D.jiraBase)}/browse/${esc(i.k)}#comment-tabpanel" target="_blank">All comments in Jira ↗</a></div>`;
   pop.classList.add('on');
@@ -342,9 +400,9 @@ function showPop(btn) {
   let y = r.bottom + 6; if (y + ph > innerHeight - 12) y = Math.max(12, r.top - ph - 6); pop.style.top = y + 'px';
 }
 const hidePop = () => { hideT = setTimeout(() => pop.classList.remove('on'), 180); };
-document.addEventListener('mouseover', e => { const b = e.target.closest('[data-cm]'); if (b) showPop(b); else if (e.target.closest('#pop')) clearTimeout(hideT); });
-document.addEventListener('mouseout', e => { if (e.target.closest('[data-cm]') || e.target.closest('#pop')) hidePop(); });
-document.addEventListener('focusin', e => { const b = e.target.closest('[data-cm]'); if (b) showPop(b); });
+document.addEventListener('mouseover', e => { const b = e.target.closest('[data-cm],[data-lb]'); if (b) showPop(b); else if (e.target.closest('#pop')) clearTimeout(hideT); });
+document.addEventListener('mouseout', e => { if (e.target.closest('[data-cm],[data-lb]') || e.target.closest('#pop')) hidePop(); });
+document.addEventListener('focusin', e => { const b = e.target.closest('[data-cm],[data-lb]'); if (b) showPop(b); });
 addEventListener('scroll', () => { pop.classList.remove('on'); closeMenu(); }, { passive: true });
 
 function toast(html, err) {
@@ -406,7 +464,7 @@ async function load(refresh) {
   PRI_RANK = Object.fromEntries(D.priorities.map((p, n) => [p.name, n]));
   PRI_ICON = Object.fromEntries(D.priorities.map(p => [p.name, p.icon]));
   BUB = Object.fromEntries(D.bubbles.map(b => [b.id, b]));
-  STREAMS = D.tabs.map(t => ({ ...t, match: (t.match || []).map(m => m.toLowerCase()), issues: t.issues || [] }));
+  STREAMS = D.tabs.map(t => ({ ...t, activity_types: (t.activity_types || []).map(norm), issues: t.issues || [] }));
   byKey = Object.fromEntries(D.issues.map(i => [i.k, i]));
   items = D.issues.filter(i => !i.ctx);
   children = {}; for (const i of D.issues) if (i.p && byKey[i.p]) (children[i.p] ??= []).push(i);

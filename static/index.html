@@ -47,6 +47,10 @@ img.ti,img.pi{width:16px;height:16px;flex:none;vertical-align:-3px}
 @keyframes pulse{50%{opacity:.3}}
 .refresh{border:1px solid var(--line);background:var(--panel);border-radius:6px;width:28px;height:28px;padding:0;color:var(--muted)}
 .refresh:hover{color:var(--ink);background:var(--hover)}
+/* ‹ › scroll the bubble strip when it overflows (shown only then) */
+.scrl{display:flex;gap:4px;flex:none} .scrl[hidden]{display:none}
+.scrl .refresh{font-size:18px;line-height:1;padding-bottom:2px}
+.scrl .refresh:disabled{opacity:.35;cursor:default;background:var(--panel);color:var(--muted)}
 .pav.ini{display:grid;place-items:center;background:var(--accent);color:#fff;font-size:10px;font-weight:800}
 .toast.err{background:var(--red);color:#fff}
 .ed.busy,.ext.busy{opacity:.5;pointer-events:none}
@@ -55,10 +59,14 @@ img.ti,img.pi{width:16px;height:16px;flex:none;vertical-align:-3px}
 /* project bubbles */
 .team{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0 2px}
 .team::-webkit-scrollbar{display:none}
-.member{display:flex;align-items:center;gap:6px;padding:2px 8px 2px 3px;font-size:13px;border:1px solid var(--line);border-radius:999px;background:var(--panel);white-space:nowrap}
+/* fade out an edge that has more bubbles beyond it (classes set by updateScrl) */
+.team{--fl:0px;--fr:0px;-webkit-mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%)}
+.team.more-l{--fl:40px} .team.more-r{--fr:40px}
+.member{display:flex;align-items:center;gap:6px;padding:0 8px 0 0;font-size:13px;border:1px solid var(--line);border-radius:999px;background:var(--panel);white-space:nowrap}
 .member:hover{background:var(--hover)}
 .member.on{border-color:var(--accent);background:var(--accent-soft)}
-.member img,.pav{width:20px;height:20px;border-radius:5px;flex:none}
+/* the icon fills the pill's rounded left tip: a circle as tall as the pill's inside */
+.member img,.pav{width:24px;height:24px;border-radius:50%;flex:none;object-fit:cover}
 .pav.all{font-size:12px}
 .pav.all{display:grid;place-items:center;background:var(--ink);color:var(--panel);font-weight:800}
 .member .nm{font-weight:600}
@@ -110,7 +118,13 @@ tr.pg .cnt{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
 .issue img.ti{margin-top:1px}
 .key{font-weight:600;font-size:12px;white-space:nowrap;margin-top:1px}
 .sum{min-width:0}
-.lbl{display:table;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-top:3px;font-weight:400}
+.lbls{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.lbl{font-size:11px;line-height:16px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px;font-weight:400;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+a.lbl:hover{color:var(--blue);border-color:var(--blue);text-decoration:none}
+.lbl.more{cursor:default;background:var(--grey-soft);color:var(--ink)}
+.lbl.more:hover,.lbl.more:focus{border-color:var(--muted);outline:none}
+.pop.lb{width:auto;max-width:min(420px,90vw)}
+.pop .lbls .lbl{max-width:none}
 .kids{color:var(--muted);font-size:11px;white-space:nowrap;margin-top:2px}
 
 /* editable cells */
@@ -131,8 +145,16 @@ td.c-st,th.c-st{padding-left:8px;padding-right:4px}
 .st{font-size:10.5px;font-weight:700;letter-spacing:.01em;text-transform:uppercase;padding:1px 5px;border-radius:4px;white-space:nowrap;display:inline-block}
 .s-todo{background:var(--grey-soft);color:var(--muted)} .s-prog{background:var(--blue-soft);color:var(--blue)} .s-block{background:var(--red-soft);color:var(--red)} .s-done{background:var(--green-soft);color:var(--green)}
 .pr{font-size:12px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
-.who{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
-.tgt{font-size:12px;white-space:nowrap} .tgt.bad{color:var(--red);font-weight:600} .tgt.none{color:var(--muted)}
+/* assignee: avatar only (name on hover), initials when Jira has no picture */
+td.c-who,th.c-who{text-align:center;padding-left:4px;padding-right:4px}
+.av{box-sizing:border-box;width:22px;height:22px;border-radius:50%;flex:none;display:inline-grid;place-items:center;line-height:1;text-align:center;font-size:9.5px;font-weight:700;object-fit:cover;vertical-align:middle}
+.av.ini{background:hsl(var(--h) 55% 45%);color:#fff;letter-spacing:.02em}
+.av.none{border:1.5px dashed var(--line);color:var(--muted);font-size:11px}
+.ed.ico .av{display:grid}
+.who-av{display:inline-block;line-height:0;opacity:.7}
+.menu .opt .av{margin-right:2px}
+.tgt{font-size:12px;white-space:nowrap} .tgt.bad{color:var(--red);font-weight:600}
+.tgt .late{display:block;font-size:11px;font-weight:500;opacity:.85} .tgt.none{color:var(--muted)}
 
 .ext{display:flex;gap:6px;align-items:flex-start;border-radius:6px;padding:2px 4px;margin:-2px -4px;cursor:text}
 .ext:hover{background:var(--grey-soft)}
@@ -189,13 +211,14 @@ td.c-st,th.c-st{padding-left:8px;padding-right:4px}
 .toast.on{display:block}
 .toast code{font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px}
-@media (max-width: 1000px){ .grid{grid-template-columns:1fr} .hint{display:none} .kpis{margin-left:0} .c-who,.c-tgt{display:none} }
+@media (max-width: 1000px){ .grid{grid-template-columns:1fr} .hint{display:none} .kpis{margin-left:0} .c-tgt,.c-due{display:none} }
 </style>
 </head>
 <body>
 <header class="top">
   <div class="logo">j<span>i</span>raf</div>
   <nav class="team" id="team"></nav>
+  <div class="scrl" id="scrl" hidden><button class="refresh" id="scrlL" title="Scroll projects left" aria-label="Scroll projects left">‹</button><button class="refresh" id="scrlR" title="Scroll projects right" aria-label="Scroll projects right">›</button></div>
   <div class="sync" id="sync" title="Live from Jira"><span class="dot" id="dot"></span><span id="now">loading…</span></div>
   <button class="refresh" id="theme" title="Theme"></button>
   <button class="refresh" id="refresh" title="Reload from Jira (bypasses the cache)">↻</button>

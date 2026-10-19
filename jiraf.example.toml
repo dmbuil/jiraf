@@ -12,7 +12,7 @@ cache_seconds = 60        # in-memory only; the ↻ button bypasses it
 # Custom field ids on your Jira instance: GET /rest/api/2/field lists them.
 [fields]
 extended_status  = "customfield_10001"   # single-line text: the follow-up note
-initiative_label = "customfield_10002"   # labels on Initiatives: decides the tab
+activity_type    = "customfield_10002"   # single-select "Activity Type": decides the tab
 parent_link      = "customfield_10003"   # Advanced Roadmaps "Parent Link"
 epic_link        = "customfield_10004"   # "Epic Link"
 target_start     = "customfield_10005"   # Advanced Roadmaps "Target start"
@@ -26,21 +26,28 @@ hierarchy = ["Initiative", "Epic", "Task", "Sub-task"]
 initiative_type = "Initiative"
 priority_order = ["Blocker", "Critical", "Major", "Medium", "Minor", "Low", "Trivial"]
 
-# Tree tabs (shown in this order), split by the Initiative Label of each item's Initiative (children
-# inherit it). issues = [keys] pins Initiatives (and their children) to a tab and wins over labels.
-# Otherwise the first tab whose `match` substring appears (case-insensitive) wins; unlabeled
-# Initiatives go to the tab with include_unlabeled = true. Anything else lands in an "Other" tab.
+# Tree tabs (shown in this order), split by the "Activity Type" field.
+# The top-most Activity Type in an item's line wins (usually its Initiative's), so a whole tree stays
+# in one tab. A tab takes the items whose Activity Type is listed in its activity_types (whole values,
+# case and accents ignored; several values can share a tab). Items with no Activity Type anywhere up
+# the tree go to the tab with include_unset = true. issues = [keys] pins issues (and their
+# descendants) to a tab and wins over everything. Anything else lands in an "Other" tab.
 [[tabs]]
 id = "road"
 name = "Roadmap"
-match = ["roadmap"]
-include_unlabeled = true
+activity_types = ["New Roadmap"]
+include_unset = true
 
 [[tabs]]
 id = "sus"
 name = "Sust. & Support"
-match = ["sustainability", "support"]
+activity_types = ["Sustainability"]
 # issues = ["ABC-123"]
+
+[[tabs]]
+id = "evo"
+name = "Tech. Evol."
+activity_types = ["Technology Evolution"]
 
 # Bubbles in the top bar: any JQL (ORDER BY is ignored). Open issues plus those closed in the last
 # `done_days` are fetched. icon_project borrows a Jira project's avatar. exclude = ["id", …] subtracts
