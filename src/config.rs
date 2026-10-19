@@ -320,7 +320,7 @@ pub fn env_file_var(env_file: &Path, name: &str) -> Result<Option<String>> {
 /// # Errors
 /// If the token is missing or empty (the message names `env_file`), or the file can't be read.
 pub fn read_token(env_file: &Path) -> Result<String> {
-    let token = match std::env::var("JIRA_TOKEN").ok().filter(|t| !t.trim().is_empty()) {
+    let token = match std::env::var("JIRA_TOKEN").ok().filter(|_| token_from_env()) {
         Some(t) => t,
         None => env_file_var(env_file, "JIRA_TOKEN")?.with_context(|| format!("JIRA_TOKEN is not set (put it in {})", env_file.display()))?,
     };
@@ -328,6 +328,11 @@ pub fn read_token(env_file: &Path) -> Result<String> {
         bail!("JIRA_TOKEN is empty in {}", env_file.display());
     }
     Ok(token)
+}
+
+/// Whether a non-empty `JIRA_TOKEN` is set in the process environment (it then wins over `.env`).
+pub fn token_from_env() -> bool {
+    std::env::var("JIRA_TOKEN").is_ok_and(|t| !t.trim().is_empty())
 }
 
 /// Resolve [`Server::icon_dir`]: absolute paths as-is, relative ones against the config folder `dir`.

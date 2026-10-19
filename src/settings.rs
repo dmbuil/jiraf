@@ -1,7 +1,8 @@
 //! The Settings screen: validation, Jira checks, clean writes of `jiraf.toml` and `.env`, and its
 //! commands.
 
-use crate::config::{CONFIG_FILE, Config, Fields};
+use crate::app::{Holder, Status};
+use crate::config::{self, CONFIG_FILE, Config, ENV_FILE, Fields};
 use crate::jira::{self, Jira, JiraError};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -231,6 +232,121 @@ pub fn write_token(env_file: &Path, token: &str) -> Result<()> {
         out.push('\n');
     }
     atomic_write(env_file, &out)
+}
+
+/* ---------- commands ---------- */
+
+/// What the Settings screen opens with ([`settings`]). Never carries the token itself.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    /// The current `jiraf.toml` as written (excludes not folded in), or [`Config::template`] when
+    /// there is none or it can't be read.
+    pub config: Config,
+    /// Whether a token is saved (or set in the environment).
+    pub token_set: bool,
+    /// Whether `JIRA_TOKEN` in the process environment wins over the one in `.env`.
+    pub token_from_env: bool,
+    /// No `jiraf.toml` yet.
+    pub first_run: bool,
+    /// Why `jiraf.toml` couldn't be read, if it couldn't (Save then replaces it, keeping a `.bak`).
+    pub parse_error: Option<String>,
+    /// Full path of the config folder.
+    pub config_dir: String,
+}
+
+/// The outcome of [`save_settings`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveReport {
+    /// Whether the files were written.
+    pub saved: bool,
+    /// Why not, field by field (empty when saved).
+    pub errors: Vec<Problem>,
+    /// Saved anyway: bubbles whose JQL Jira rejects.
+    pub warnings: Vec<Problem>,
+    /// Jira couldn't be reached for some checks, which were skipped.
+    pub unverified: bool,
+    /// The app's status after the reload that follows a save.
+    pub status: Option<Status>,
+}
+
+/// Everything the Settings screen shows.
+#[tauri::command]
+pub fn settings(holder: tauri::State<'_, Holder>) -> SettingsView {
+    let dir = &holder.dir;
+    let path = dir.join(CONFIG_FILE);
+    let (config, first_run, parse_error) = match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Config::template(), true, None),
+        Err(e) => (Config::template(), false, Some(format!("reading {}: {e}", path.display()))),
+        Ok(raw) => match Config::parse(&raw) {
+            Ok(c) => (c, false, None),
+            Err(e) => (Config::template(), false, Some(format!("{e:#}"))),
+        },
+    };
+    SettingsView {
+        config,
+        token_set: config::read_token(&dir.join(ENV_FILE)).is_ok(),
+        token_from_env: config::token_from_env(),
+        first_run,
+        parse_error,
+        config_dir: dir.display().to_string(),
+    }
+}
+
+/// Validate `config` (and `token`, when one was typed), check them with Jira, and if nothing blocks,
+/// write `jiraf.toml` (keeping a `.bak`) and `.env`, then reload the app.
+///
+/// # Errors
+/// Only if a file can't be written; everything else is in the [`SaveReport`].
+#[tauri::command]
+pub async fn save_settings(holder: tauri::State<'_, Holder>, config: Config, token: Option<String>) -> Result<SaveReport, String> {
+    let mut cfg = config;
+    config::assign_ids(&mut cfg);
+    cfg.jira.url = cfg.jira.url.trim().trim_end_matches('/').to_string();
+    let token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let env = holder.dir.join(ENV_FILE);
+    let current = config::read_token(&env).ok();
+    let unsaved = |errors, warnings, unverified| SaveReport { saved: false, errors, warnings, unverified, status: None };
+    let errors = validate(&cfg, token.is_some() || current.is_some());
+    if !errors.is_empty() {
+        return Ok(unsaved(errors, Vec::new(), false));
+    }
+    let check = check_with_jira(&cfg, token.as_deref().or(current.as_deref()).unwrap_or_default()).await;
+    if !check.errors.is_empty() {
+        return Ok(unsaved(check.errors, check.warnings, check.unverified));
+    }
+    write_config(&holder.dir, &cfg).map_err(|e| format!("{e:#}"))?;
+    if let Some(t) = &token {
+        write_token(&env, t).map_err(|e| format!("{e:#}"))?;
+    }
+    log::info!("settings saved");
+    let status = holder.reload().await;
+    Ok(SaveReport { saved: true, errors: Vec::new(), warnings: check.warnings, unverified: check.unverified, status: Some(status) })
+}
+
+/// Save a new token from the startup error screen: checked with Jira first when `jiraf.toml` can be
+/// read (an unreachable Jira doesn't block), then written to `.env`, then the app reloads.
+///
+/// # Errors
+/// If the token is empty or Jira rejects it, or `.env` can't be written.
+#[tauri::command]
+pub async fn save_token(holder: tauri::State<'_, Holder>, token: String) -> Result<Status, String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("Paste your Jira token".into());
+    }
+    if let Ok(raw) = std::fs::read_to_string(holder.dir.join(CONFIG_FILE))
+        && let Ok(cfg) = Config::parse(&raw)
+        && let Ok(j) = Jira::with(&cfg.jira.url, token)
+        && let Err(e) = j.get("/rest/api/2/myself").await
+        && matches!(jira_status(&e), Some(401 | 403))
+    {
+        return Err("Jira rejected this token".into());
+    }
+    write_token(&holder.dir.join(ENV_FILE), token).map_err(|e| format!("{e:#}"))?;
+    log::info!("token saved");
+    Ok(holder.reload().await)
 }
 
 #[cfg(test)]

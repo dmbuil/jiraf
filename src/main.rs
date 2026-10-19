@@ -30,14 +30,17 @@ fn config_dir(app: &tauri::App) -> tauri::Result<PathBuf> {
     }
 }
 
-/// The default app menu plus "Reload config" (⌘⇧R / Ctrl+Shift+R) in its first submenu.
+/// The default app menu plus "Settings…" (⌘, / Ctrl+,) and "Reload config" (⌘⇧R / Ctrl+Shift+R) in its
+/// first submenu.
 ///
 /// # Errors
 /// If the menu can't be built.
 fn menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app.handle())?;
+    let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
     let reload = MenuItem::with_id(app, "reload-config", "Reload config", true, Some("CmdOrCtrl+Shift+R"))?;
     if let Some(first) = menu.items()?.first().and_then(|i| i.as_submenu()) {
+        first.append(&settings)?;
         first.append(&reload)?;
     }
     Ok(menu)
@@ -62,12 +65,15 @@ fn main() {
             });
             Ok(())
         })
-        // Reload config: the page runs the same flow as its Retry button.
+        // Reload config: the page runs the same flow as its Retry button. Settings…: the page opens it.
         .on_menu_event(|app, event| {
-            if event.id() == "reload-config"
-                && let Err(e) = app.emit("reload-config", ())
-            {
-                log::warn!("reload-config: {e}");
+            let name = match event.id().as_ref() {
+                "reload-config" => "reload-config",
+                "settings" => "open-settings",
+                _ => return,
+            };
+            if let Err(e) = app.emit(name, ()) {
+                log::warn!("{name}: {e}");
             }
         })
         // Jira icons and avatars, fetched with the token and cached (see `api::icon_response`).
@@ -93,6 +99,9 @@ fn main() {
             api::set_due,
             api::transition,
             api::open_external,
+            settings::settings,
+            settings::save_settings,
+            settings::save_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running jiraf");
