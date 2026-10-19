@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true,
-        "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": { "x": 16, "y": 26 }
+        "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": { "x": 16, "y": 30 }
       }
     ],
     "security": {
