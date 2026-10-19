@@ -209,6 +209,8 @@ td.c-who,th.c-who{text-align:center;padding-left:4px;padding-right:4px}
 .it .l3{padding-left:24px;display:flex;gap:12px;align-items:flex-start}
 .it .l3 .ext{flex:1}
 .empty{padding:14px;color:var(--muted);font-style:italic}
+.oops{display:block;height:150px;width:auto;margin:12px auto}
+.empty.failed{text-align:center}
 
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:10px 14px;border-radius:8px;font-size:12px;box-shadow:var(--shadow);max-width:min(760px,92vw);display:none;z-index:30}
 .toast.on{display:block}
@@ -216,7 +218,7 @@ td.c-who,th.c-who{text-align:center;padding-left:4px;padding-right:4px}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px}
 /* startup error screen: replaces the dashboard until Retry succeeds */
 .startup{max-width:640px;margin:48px auto;padding:28px;text-align:center}
-.startup img{width:96px;height:96px}
+.startup img{height:180px;width:auto}
 .startup h2{margin:8px 0 12px;font-size:18px}
 .startup pre{text-align:left;white-space:pre-wrap;word-break:break-word;background:var(--red-soft);color:var(--red);border-radius:6px;padding:10px 12px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;margin:0 0 12px}
 .startup p{color:var(--muted);margin:0 0 16px}
@@ -237,7 +239,7 @@ body.failed main,body.failed .top>:not(.logo):not(#theme){display:none!important
 </header>
 
 <section class="startup card" id="startup" hidden>
-  <img src="jiraf.png" alt="">
+  <img src="jiraf-error.png" alt="">
   <h2>jiraf couldn't start</h2>
   <pre id="startupMsg"></pre>
   <p>Config folder: <code id="startupDir"></code></p>

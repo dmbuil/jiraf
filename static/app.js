@@ -450,7 +450,7 @@ async function load(refresh) {
   catch (e) {
     dot.className = 'dot err'; now.textContent = 'error';
     toast(`Could not load from Jira: ${esc(e.message)}`, true);
-    if (!D) document.getElementById('tbody').innerHTML = `<tr><td class="empty">Could not load from Jira: ${esc(e.message)}</td></tr>`;
+    if (!D) document.getElementById('tbody').innerHTML = `<tr><td class="empty failed"><img class="oops" src="jiraf-error.png" alt="">Could not load from Jira: ${esc(e.message)}</td></tr>`;
     return;
   }
   const first = !D;
