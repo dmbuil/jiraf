@@ -24,8 +24,7 @@ keys and summaries, people's names, and any JQL that reveals them. Never paste y
 `JIRA_TOKEN` or your `jiraf.toml` as is.
 
 A security problem (for example, a way for the page to open arbitrary URLs or to read the token) should
-not go into a public issue with details: open an issue asking for a private contact, and the details
-can follow there.
+not go into a public issue with details: see [SECURITY.md](SECURITY.md) for how to report it.
 
 ## Design decisions
 

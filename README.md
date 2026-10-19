@@ -52,6 +52,7 @@ opens in its own window. No terminal, no browser tab, no local server.
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ---
 
@@ -405,6 +406,8 @@ jiraf holds a token that can edit Jira as you:
 - **Only Jira links open**: `open_external` refuses any URL outside the configured Jira.
 - **Content-Security-Policy**: only jiraf's own script runs, and the page can't load anything remote.
   Jira text is always inserted as text, never as HTML.
+
+How to report a vulnerability, and what jiraf doesn't protect against: [SECURITY.md](SECURITY.md).
 
 **Never commit** `.env`, `jiraf.toml` (real URLs, project keys and JQL), `icons/`, `jiraf.log` or `mockup/`.
 All five are in `.gitignore`.
