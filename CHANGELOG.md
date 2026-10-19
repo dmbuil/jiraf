@@ -4,6 +4,8 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 jiraf becomes a native desktop app (Tauri 2) with a Settings screen. No more terminal, browser tab or
 hand-edited config files.
 
@@ -65,7 +67,7 @@ hand-edited config files.
 - A slow startup check can no longer overwrite the result of a newer Retry.
 - Inline styles keep working under the app's Content Security Policy.
 
-## [0.1.0]
+## [0.1.0] - 2026-10-14
 
 First version: a stateless follow-up dashboard over Jira (Data Center) Plans, served by a local actix-web
 server and opened in the browser.
@@ -79,3 +81,7 @@ server and opened in the browser.
 - Tabs split by the "Activity Type" field, with pinned issues and an "Other" tab.
 - Assignee avatars and Jira icons cached locally.
 - Light and dark themes.
+
+[Unreleased]: https://github.com/dmbuil/jiraf/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dmbuil/jiraf/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/dmbuil/jiraf/releases/tag/v0.1.0
