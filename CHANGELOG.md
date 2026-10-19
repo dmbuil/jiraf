@@ -6,6 +6,7 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ### Changed
 
+- `jiraf.log` no longer grows forever: once it is over 4 MB, jiraf empties it at the next launch.
 - Settings: **Open config folder** (was **Open jiraf.toml**) shows the folder with `jiraf.toml`
   selected, instead of opening the file in whatever app claims `.toml` files.
 

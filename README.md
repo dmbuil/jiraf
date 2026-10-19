@@ -96,7 +96,7 @@ Everything lives in the config folder (on Windows, `%APPDATA%\com.dmbuil.jiraf\`
 ├── jiraf.example.toml   a commented example, if you prefer editing by hand
 ├── .env.example
 ├── icons/               local copies of Jira icons (created on first load)
-└── jiraf.log            the app's log
+└── jiraf.log            the app's log (emptied at launch once it passes 4 MB)
 ```
 
 Already have a `jiraf.toml` and `.env` from the server version? Move them into that folder.

@@ -19,7 +19,7 @@ that calls Tauri commands. Nothing is stored except config, an icon cache, a log
 | `src/settings.rs` | Settings screen: validation, Jira checks, atomic writes of `jiraf.toml` / `.env`, its commands |
 | `src/api.rs` | dashboard commands, icon proxy, external links |
 | `src/jira.rs` | Jira REST client, searches, issue mapping |
-| `src/logging.rs` | `jiraf.log` in the config folder |
+| `src/logging.rs` | `jiraf.log` in the config folder (emptied at launch past 4 MB) |
 | `static/` | `index.html` (markup + all CSS), `app.js` (dashboard), `settings.js` (Settings screen) |
 | `tauri.conf.json`, `capabilities/` | window, CSP, bundle, permissions |
 | `.github/workflows/build.yml` | CI: tests + clippy on macOS and Windows; bundles for `main` and `v*` tags (attached to the release) |
