@@ -1,4 +1,5 @@
 # jiraf configuration example. Copy to jiraf.toml (git-ignored) and adapt.
+# You can also edit all of this from the app: Settings (⌘,).
 # Secrets live in .env (JIRA_TOKEN), never here.
 
 [server]

@@ -74,26 +74,32 @@ git clone <this repo> jiraf && cd jiraf
 cargo tauri build --bundles app   # → target/release/bundle/macos/jiraf.app
 ```
 
-Drag `jiraf.app` into **Applications** and open it. The first launch creates the config folder and
-shows where it is:
+Drag `jiraf.app` into **Applications** and open it. The first launch opens the **Settings** screen:
+fill in your Jira URL, token, field ids and at least one bubble, then **Save**. jiraf checks them with
+Jira and loads the dashboard. Later, **Settings…** (⌘,) in the app menu brings it back.
+
+Everything lives in the config folder:
 
 ```
 ~/Library/Application Support/com.dmbuil.jiraf/
-├── jiraf.example.toml   copy to jiraf.toml: your Jira URL, field ids, tabs and bubbles
-├── .env.example         copy to .env and paste your token after JIRA_TOKEN=
+├── jiraf.toml           written by Settings: your Jira URL, field ids, tabs and bubbles
+├── jiraf.toml.bak       the previous jiraf.toml, kept on every save
+├── .env                 JIRA_TOKEN=… (Settings only ever changes that line)
+├── jiraf.example.toml   a commented example, if you prefer editing by hand
+├── .env.example
 ├── icons/               local copies of Jira icons (created on first load)
 └── jiraf.log            the app's log
 ```
 
-Fill in `jiraf.toml` and `.env`, then click **Retry**. Already have a `jiraf.toml` and `.env` from the
-server version? Move them into that folder. **Open config folder** on the error screen opens it in Finder.
+Already have a `jiraf.toml` and `.env` from the server version? Move them into that folder.
+**Open config folder** on the error screen opens it in Finder.
 
 To create a token, go to **Jira › your avatar › Profile › Personal Access Tokens › Create token**.
 
 On startup jiraf checks the token (`GET /rest/api/2/myself`) and that the configured Extended Status
-field exists. If anything fails, the window shows the error, the config folder, **Retry** and
-**Open config folder**. Fix the file, click Retry: no restart needed. When all is well, `jiraf.log`
-says:
+field exists. If anything fails, the window shows the error, the config folder, **Retry**, **Open
+Settings** and **Open config folder**. When the token is the problem (missing, empty, expired), the
+error screen also has a box to paste a new one. When all is well, `jiraf.log` says:
 
 ```
 INFO jiraf::app] connected to https://jira.example.com as JANE DOE
@@ -200,7 +206,15 @@ Rows here are editable too.
 
 ## Configuration
 
-jiraf reads two files from its config folder (`~/Library/Application Support/com.dmbuil.jiraf/`):
+Use **Settings** (⌘,): every value below is a form field there, with an ⓘ tooltip on how to fill it
+in. On **Save**, jiraf refuses what would stop it from working (an empty URL, a token Jira rejects, a
+field id Jira doesn't know…) and marks the field. A bubble whose JQL Jira rejects is saved anyway with a
+warning, and shows as broken (⚠) on the dashboard while the other bubbles keep working. If Jira can't
+be reached, the save goes through unchecked. Settings writes a clean `jiraf.toml` (no comments) and
+keeps the previous one as `jiraf.toml.bak`.
+
+You can still edit the files by hand. jiraf reads two files from its config folder
+(`~/Library/Application Support/com.dmbuil.jiraf/`):
 
 | File         | Contents                                                                |
 | ------------ | ----------------------------------------------------------------------- |
@@ -365,6 +379,9 @@ See the `beta-core` bubble in [`jiraf.example.toml`](jiraf.example.toml) for the
 | `set_due { key, date }`                 | same, for Jira's Due date                          |
 | `set_ext { key, value }`                | set the Extended Status                            |
 | `open_external { url }`                 | open a Jira link in the default browser            |
+| `settings`                              | what the Settings screen shows (never the token)   |
+| `save_settings { config, token }`       | validate, check with Jira, write the files, reload |
+| `save_token { token }`                  | the error screen's token box                       |
 
 ## Security
 
