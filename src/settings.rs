@@ -1,7 +1,8 @@
 //! The Settings screen: validation, Jira checks, clean writes of `jiraf.toml` and `.env`, and its
 //! commands.
 
-use crate::config::{CONFIG_FILE, Config};
+use crate::config::{CONFIG_FILE, Config, Fields};
+use crate::jira::{self, Jira, JiraError};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::Path;
@@ -36,15 +37,7 @@ pub fn validate(cfg: &Config, token_available: bool) -> Vec<Problem> {
     if !token_available {
         out.push(Problem::new("token", "Paste your Jira token"));
     }
-    let f = &cfg.fields;
-    for (key, value) in [
-        ("extended_status", &f.extended_status),
-        ("activity_type", &f.activity_type),
-        ("parent_link", &f.parent_link),
-        ("epic_link", &f.epic_link),
-        ("target_start", &f.target_start),
-        ("target_end", &f.target_end),
-    ] {
+    for (key, value) in field_ids(&cfg.fields) {
         if value.trim().is_empty() {
             out.push(Problem::new(format!("fields.{key}"), "Required"));
         }
@@ -98,6 +91,84 @@ pub fn validate(cfg: &Config, token_available: bool) -> Vec<Problem> {
             out.push(Problem::new(format!("tabs.{i}.name"), "Required"));
         } else if !names.insert(name) {
             out.push(Problem::new(format!("tabs.{i}.name"), "Another tab already has this name"));
+        }
+    }
+    out
+}
+
+/// Each `[fields]` key with its value.
+fn field_ids(f: &Fields) -> [(&'static str, &String); 6] {
+    [
+        ("extended_status", &f.extended_status),
+        ("activity_type", &f.activity_type),
+        ("parent_link", &f.parent_link),
+        ("epic_link", &f.epic_link),
+        ("target_start", &f.target_start),
+        ("target_end", &f.target_end),
+    ]
+}
+
+/// What Jira said about a config on Save ([`check_with_jira`]).
+#[derive(Default, Debug)]
+pub struct JiraCheck {
+    /// Block the save: rejected token, unknown field ids.
+    pub errors: Vec<Problem>,
+    /// Saved anyway: bubbles whose JQL Jira rejects.
+    pub warnings: Vec<Problem>,
+    /// Jira couldn't be reached (or answered oddly) for at least one check, which was skipped.
+    pub unverified: bool,
+}
+
+/// The HTTP status of `e` if it is a [`JiraError`].
+fn jira_status(e: &anyhow::Error) -> Option<u16> {
+    e.downcast_ref::<JiraError>().map(|j| j.status.as_u16())
+}
+
+/// Check `cfg` against its Jira with `token`: the token (`/myself`), then the field ids, then every
+/// bubble's effective JQL. Jira being out of reach never blocks: those checks are skipped and
+/// [`JiraCheck::unverified`] is set.
+pub async fn check_with_jira(cfg: &Config, token: &str) -> JiraCheck {
+    let mut out = JiraCheck::default();
+    let j = match Jira::with(cfg.jira.url.trim().trim_end_matches('/'), token.trim()) {
+        Ok(j) => j,
+        Err(_) => {
+            out.unverified = true;
+            return out;
+        }
+    };
+    if let Err(e) = j.get("/rest/api/2/myself").await {
+        if matches!(jira_status(&e), Some(401 | 403)) {
+            out.errors.push(Problem::new("token", "Jira rejected this token"));
+        } else {
+            log::warn!("settings: couldn't check the token: {e:#}");
+            out.unverified = true;
+        }
+        return out;
+    }
+    match jira::field_names(&j).await {
+        Ok(names) => {
+            for (key, id) in field_ids(&cfg.fields) {
+                if !names.contains_key(id.trim()) {
+                    out.errors.push(Problem::new(format!("fields.{key}"), "No field with this id in Jira"));
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("settings: couldn't read the field list: {e:#}");
+            out.unverified = true;
+            return out;
+        }
+    }
+    let bubbles = crate::config::resolve_excludes(&cfg.bubbles).unwrap_or_else(|_| cfg.bubbles.clone());
+    for (i, b) in bubbles.iter().enumerate() {
+        if let Err(e) = j.check_jql(jira::strip_order_by(&b.jql)).await {
+            match e.downcast_ref::<JiraError>() {
+                Some(je) if je.status.as_u16() == 400 => out.warnings.push(Problem::new(format!("bubbles.{i}.jql"), je.message.clone())),
+                _ => {
+                    log::warn!("settings: couldn't check bubble `{}`: {e:#}", b.id);
+                    out.unverified = true;
+                }
+            }
         }
     }
     out
@@ -181,6 +252,88 @@ mod tests {
         };
         c.bubbles = vec![Bubble { id: "alpha".into(), name: "Alpha".into(), jql: "project = A".into(), icon_project: None, exclude: vec![] }];
         c
+    }
+
+    /// [`valid`] pointed at `url`, with bubbles `ok` (JQL `x`) and `broken` (JQL `bad`).
+    fn with_url(url: &str) -> Config {
+        let mut c = valid();
+        c.jira.url = url.into();
+        let b = |id: &str, jql: &str| Bubble { id: id.into(), name: id.into(), jql: jql.into(), icon_project: None, exclude: vec![] };
+        c.bubbles = vec![b("ok", "x"), b("broken", "bad")];
+        c
+    }
+
+    /// A one-shot-per-connection fake Jira on a random local port; returns its base URL. Each route is
+    /// (path prefix, status, body); status 0 answers a search by its body: 400 if the JQL contains `bad`.
+    async fn fake_jira(routes: Vec<(&'static str, u16, &'static str)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // read the headers, then as much body as Content-Length says
+                    let (head, body) = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let head = text[..end].to_string();
+                            let len = head
+                                .lines()
+                                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break (head, String::from_utf8_lossy(&buf[end + 4..end + 4 + len]).to_string());
+                            }
+                        }
+                    };
+                    let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let (status, reply) = match routes.iter().find(|(p, _, _)| path.starts_with(p)) {
+                        Some((_, 0, _)) if body.contains("bad") => (400, r#"{"errorMessages":["Error in the JQL Query"]}"#),
+                        Some((_, 0, _)) => (200, r#"{"issues":[],"total":0}"#),
+                        Some((_, st, b)) => (*st, *b),
+                        None => (404, "{}"),
+                    };
+                    let resp = format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn rejected_token_blocks() {
+        let url = fake_jira(vec![("/rest/api/2/myself", 401, "{}")]).await;
+        let r = check_with_jira(&with_url(&url), "t").await;
+        assert_eq!(r.errors, vec![Problem { at: "token".into(), message: "Jira rejected this token".into() }]);
+    }
+
+    #[tokio::test]
+    async fn bad_jql_warns_and_unknown_field_blocks() {
+        let fields = r#"[{"id":"customfield_1","name":"Ext"}]"#; // only extended_status exists
+        let url = fake_jira(vec![("/rest/api/2/myself", 200, r#"{"displayName":"x"}"#), ("/rest/api/2/field", 200, fields), ("/rest/api/2/search", 0, "")]).await;
+        let mut c = with_url(&url);
+        c.bubbles[1].exclude = vec![];
+        let r = check_with_jira(&c, "t").await;
+        assert!(r.errors.iter().any(|p| p.at == "fields.epic_link" && p.message == "No field with this id in Jira"), "{r:?}");
+        assert!(!r.errors.iter().any(|p| p.at == "fields.extended_status"));
+        assert_eq!(r.warnings, vec![Problem { at: "bubbles.1.jql".into(), message: "Error in the JQL Query".into() }]);
+        assert!(!r.unverified);
+    }
+
+    #[tokio::test]
+    async fn unreachable_jira_does_not_block() {
+        let r = check_with_jira(&with_url("http://127.0.0.1:9"), "t").await;
+        assert!(r.errors.is_empty() && r.warnings.is_empty() && r.unverified, "{r:?}");
     }
 
     #[test]

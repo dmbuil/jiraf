@@ -47,11 +47,19 @@ impl Jira {
     /// # Errors
     /// If the HTTP client can't be built (e.g. TLS backend failure).
     pub fn new(cfg: &Config) -> Result<Self> {
+        Self::with(&cfg.jira.url, &cfg.token)
+    }
+
+    /// Build a client for the instance at `url` (no trailing slash) using `token`. Makes no request yet.
+    ///
+    /// # Errors
+    /// If the HTTP client can't be built (e.g. TLS backend failure).
+    pub fn with(url: &str, token: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("jiraf/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
-        Ok(Self { http, base: cfg.jira.url.clone(), token: cfg.token.clone() })
+        Ok(Self { http, base: url.to_string(), token: token.to_string() })
     }
 
     /// Base URL of the instance (no trailing slash).
@@ -103,6 +111,14 @@ impl Jira {
     /// As [`Jira::call`].
     pub async fn put(&self, path: &str, body: &Value) -> Result<Option<Value>> {
         self.call(Method::PUT, path, Some(body)).await
+    }
+
+    /// Whether Jira accepts `jql`, without fetching any issue.
+    ///
+    /// # Errors
+    /// A [`JiraError`] (400 with Jira's message for bad JQL), or a transport error.
+    pub async fn check_jql(&self, jql: &str) -> Result<()> {
+        self.post("/rest/api/2/search", &serde_json::json!({ "jql": jql, "maxResults": 0, "fields": [] })).await.map(|_| ())
     }
 
     /// Raw bytes for icons/avatars (they need auth on most DC instances), with their content type.
