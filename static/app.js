@@ -493,6 +493,7 @@ document.addEventListener('click', e => {
 const startup = document.getElementById('startup');
 function showStartupError(s) {
   document.getElementById('startupMsg').textContent = s.error;
+  document.getElementById('tokBox').hidden = !s.tokenProblem; document.getElementById('tokErr').textContent = '';
   document.getElementById('startupDir').textContent = s.configDir;
   document.getElementById('retry').disabled = false; document.getElementById('retry').textContent = 'Retry';
   document.body.classList.add('failed'); startup.hidden = false;
@@ -501,6 +502,7 @@ async function boot() {
   const s = await api('app_status');
   if (s.state === 'starting') return setTimeout(boot, 250);
   if (s.state === 'failed') return showStartupError(s);
+  if (s.state === 'setup') return openSettings();
   load(false);
 }
 // Re-read jiraf.toml and .env and run the checks again (Retry button, Reload config menu).
@@ -509,8 +511,20 @@ async function retryFlow() {
   b.disabled = true; b.textContent = 'Retrying…';
   document.getElementById('dot').className = 'dot busy'; document.getElementById('now').textContent = 'loading…';
   const s = await api('retry');
-  if (s.state === 'ready') location.reload(); else showStartupError(s);
+  if (s.state === 'ready') location.reload(); else if (s.state === 'setup') openSettings(); else showStartupError(s);
 }
+// Token problem: paste a new one right on the error screen.
+document.getElementById('saveTok').onclick = async () => {
+  const b = document.getElementById('saveTok'), err = document.getElementById('tokErr');
+  b.disabled = true; err.textContent = '';
+  try {
+    const s = await api('save_token', { token: document.getElementById('startTok').value });
+    if (s.state === 'ready') return location.reload();
+    showStartupError(s);
+  } catch (e) { err.textContent = e.message; }
+  b.disabled = false;
+};
+document.getElementById('openSettings').onclick = () => openSettings();
 document.getElementById('retry').onclick = retryFlow;
 window.__TAURI__.event.listen('reload-config', retryFlow);
 document.getElementById('openDir').onclick = () => api('open_config_dir').catch(e => toast(esc(e.message), true));

@@ -453,6 +453,16 @@ mod tests {
     }
 
     #[test]
+    fn config_survives_the_trip_to_the_page_and_back() {
+        let raw = include_str!("../jiraf.example.toml");
+        let cfg = Config::parse(raw).unwrap();
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert!(json.get("token").is_none() && json.get("icon_dir").is_none(), "{json}");
+        let back: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(crate::config::render_toml(&back).unwrap(), crate::config::render_toml(&cfg).unwrap());
+    }
+
+    #[test]
     fn env_only_token_line_changes() {
         let d = tempfile::tempdir().unwrap();
         let env = d.path().join(".env");

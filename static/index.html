@@ -226,6 +226,38 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px}
 .startup code{font:12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--ink);word-break:break-all}
 .startup .actions{display:flex;gap:8px;justify-content:center}
 body.failed main,body.failed .top>:not(.logo):not(#theme){display:none!important}
+.startup .tok{display:flex;gap:8px;justify-content:center;margin:0 0 16px}
+.startup .tok input{width:min(360px,100%);padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.startup .tokerr{color:var(--red);font-size:12px;margin:-8px 0 12px}
+/* Settings screen: replaces the dashboard (or the error screen) while open */
+body.set-open main,body.set-open footer,body.set-open .startup,body.set-open .top>:not(.logo):not(#theme){display:none!important}
+.settings{max-width:860px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+.settings .banner{margin:0}
+.settings .cf-info{background:var(--accent-soft);color:var(--ink)}
+.cf-f{display:block;padding:8px 14px}
+.cf-l{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
+.cf-hlp{font-style:normal;cursor:help;color:var(--accent);font-weight:400;text-transform:none}
+.settings input[type=text],.settings input[type=password],.settings input[type=number],.settings textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.settings textarea{font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;min-height:96px;resize:vertical}
+.cf-err{display:block;font-size:12px;color:var(--red);margin-top:4px} .cf-err:empty{display:none} .cf-err.warn{color:var(--amber)}
+.card>.cf-err{padding:8px 14px 0}
+.cf-2{display:grid;grid-template-columns:1fr 1fr}
+.cf-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cf-chip{display:inline-flex;align-items:center;background:var(--grey-soft);border-radius:999px;padding:2px 4px 2px 10px;font-size:12.5px}
+.cf-chip button{border:0;background:none;padding:0 4px;color:var(--muted)}
+.cf-chip button:hover{color:var(--ink)}
+.settings .cf-add{width:170px}
+.cf-check{display:inline-flex;align-items:center;gap:6px;margin-right:12px;font-size:13px}
+label.cf-f.cf-check{display:flex}
+.cf-item{border-top:1px solid var(--line);margin-top:6px;padding-top:4px}
+.cf-ih{display:flex;align-items:center;gap:6px;padding:8px 14px 0}
+.cf-ih b{flex:1}
+.cf-row{display:flex;align-items:center;gap:10px}
+.cf-dots{letter-spacing:2px;color:var(--muted)}
+.cf-muted{color:var(--muted);font-size:12.5px}
+.cf-pad{padding:8px 14px}
+.cf-bar{position:sticky;bottom:0;display:flex;gap:8px;align-items:center;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);margin-bottom:16px}
+@media (max-width: 700px){ .cf-2{grid-template-columns:1fr} }
 @media (max-width: 1000px){ .grid{grid-template-columns:1fr} .hint{display:none} .kpis{margin-left:0} .c-tgt,.c-due{display:none} }
 </style>
 </head>
@@ -243,9 +275,15 @@ body.failed main,body.failed .top>:not(.logo):not(#theme){display:none!important
   <img src="jiraf-error.png" alt="">
   <h2>jiraf couldn't start</h2>
   <pre id="startupMsg"></pre>
+  <div id="tokBox" hidden>
+    <div class="tok"><input type="password" id="startTok" placeholder="Paste a new Jira token" autocomplete="off"><button class="tog" id="saveTok">Save token</button></div>
+    <div class="tokerr" id="tokErr"></div>
+  </div>
   <p>Config folder: <code id="startupDir"></code></p>
-  <div class="actions"><button class="tog" id="retry">Retry</button><button class="tog" id="openDir">Open config folder</button></div>
+  <div class="actions"><button class="tog" id="retry">Retry</button><button class="tog" id="openSettings">Open Settings</button><button class="tog" id="openDir">Open config folder</button></div>
 </section>
+
+<section class="settings" id="settings" hidden></section>
 
 <main>
   <div class="head">
@@ -276,12 +314,13 @@ body.failed main,body.failed .top>:not(.logo):not(#theme){display:none!important
 
   <section id="v-att" class="grid" hidden></section>
 </main>
-<footer>Stateless: every view is built from a live Jira query and every edit goes straight back to Jira. Bubbles, tabs and thresholds come from <code>jiraf.toml</code>.</footer>
+<footer>Stateless: every view is built from a live Jira query and every edit goes straight back to Jira. Bubbles, tabs and thresholds are in Settings (⌘,).</footer>
 
 <div class="pop" id="pop"></div>
 <div class="menu" id="menu"></div>
 <div class="toast" id="toast"></div>
 
 <script src="app.js"></script>
+<script src="settings.js"></script>
 </body>
 </html>
