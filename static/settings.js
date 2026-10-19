@@ -88,9 +88,7 @@ function renderSettings() {
       <div class="cf-2">${field(`bubbles.${i}.icon_project`, 'Icon project', `<input type="text" data-k="bubbles.${i}.icon_project" data-opt value="${esc(b.icon_project || '')}" placeholder="e.g. ABC" spellcheck="false">`)}
       <div class="cf-f"><span class="cf-l">Exclude${hlp(`bubbles.${i}.exclude`)}</span><div class="cf-chips">${ex}</div>${msgs(`bubbles.${i}.exclude`)}</div></div></div>`;
   }).join('');
-  const sep = v.configDir.includes('\\') ? '\\' : '/';
-  const file = `<p class="cf-intro cf-file">Stored in <a href="#" id="cfOpenFile" title="Open it in your editor">${esc(v.configDir + sep)}jiraf.toml</a>.
-    You can edit it by hand if needed, then use Reload config (⌘⇧R). Saving here rewrites it without comments.</p>`;
+  const file = `<p class="cf-intro cf-file">Edit the original <a href="#" id="cfOpenFile">jiraf.toml</a> file</p>`;
   setSec.innerHTML = `${file}${banner}
     <section class="card"><h2>Jira</h2>
       ${field('jira.url', 'URL', text('jira.url', c.jira.url, 'https://jira.example.com'))}
