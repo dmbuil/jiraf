@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Guidance for coding agents working on jiraf. Read [README.md](README.md) for what the app does, and
-[CHANGELOG.md](CHANGELOG.md) for recent changes.
+Guidance for coding agents working on jiraf. Read [README.md](README.md) for what the app does,
+[CHANGELOG.md](CHANGELOG.md) for recent changes, and [CONTRIBUTING.md](CONTRIBUTING.md) for issues, pull
+requests and releases.
 
 ## What this is
 

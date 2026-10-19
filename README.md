@@ -51,6 +51,7 @@ opens in its own window. No terminal, no browser tab, no local server.
 - [Security](#security)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
+- [Contributing](CONTRIBUTING.md)
 
 ---
 
