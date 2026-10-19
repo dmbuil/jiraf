@@ -108,6 +108,14 @@ impl Holder {
     }
 }
 
+/* ---------- commands ---------- */
+
+/// Where startup stands, so the page knows whether to wait, load the dashboard or show the error.
+#[tauri::command]
+pub fn app_status(holder: tauri::State<'_, Holder>) -> Status {
+    holder.status()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

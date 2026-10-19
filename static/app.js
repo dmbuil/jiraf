@@ -51,14 +51,9 @@ const lblChip = l => `<a class="lbl" href="${esc(D.jiraBase)}/issues/?jql=${enco
 const labels = i => !i.lb?.length ? '' : `<span class="lbls">${i.lb.slice(0, LBL_MAX).map(lblChip).join('')}${i.lb.length > LBL_MAX ? `<span class="lbl more" data-lb="${esc(i.k)}" tabindex="0">+${i.lb.length - LBL_MAX}</span>` : ''}</span>`;
 const isTreeTab = t => t !== 'att';
 
-/* ---------- server calls ---------- */
-async function api(path, body) {
-  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Jiraf': '1' }, body: JSON.stringify(body) };
-  const r = await fetch(path, opt);
-  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-  return j;
-}
+/* ---------- backend calls (Tauri commands; errors arrive as their message) ---------- */
+const api = (cmd, args = {}) => window.__TAURI__.core.invoke(cmd, args)
+  .catch(e => { throw new Error(typeof e === 'string' ? e : e?.message || String(e)); });
 
 /* ---------- state ---------- */
 let state = { proj: ALL, tab: null, q: '', types: new Set(), done: false, sort: null, collapsed: new Set() };
@@ -279,11 +274,11 @@ function renderAtt() {
     sec('att-D', `✅ Closed in the last ${FU.done_days} days`, done, 'Nothing closed recently.');
 }
 
-/* ---------- edits: POST to jiraf, which writes to Jira and returns the issue as Jira now has it ---------- */
+/* ---------- edits: jiraf writes to Jira and returns the issue as Jira now has it ---------- */
 async function save(i, field, path, body, el, okMsg) {
   el?.classList.add('busy');
   try {
-    const fresh = await api(`/api/issue/${encodeURIComponent(i.k)}/${path}`, body);
+    const fresh = await api(path === 'transition' ? 'transition' : `set_${path}`, { key: i.k, ...body });
     Object.assign(i, fresh, { bubbles: i.bubbles, ctx: i.ctx });
     i.stream = streamOf(i);
     mark(i, field); rerender(); toast(`${esc(i.k)}: ${okMsg}`);
@@ -336,7 +331,7 @@ document.addEventListener('click', async e => {
   if (kind === 'status') {
     openMenu(b, `<div class="mh">Move ${esc(i.k)} to</div><div class="empty">Loading transitions…</div>`);
     let ts;
-    try { ts = await api(`/api/issue/${encodeURIComponent(i.k)}/transitions`); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+    try { ts = await api('transitions', { key: i.k }); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
     menu.innerHTML = `<div class="mh">Move ${esc(i.k)} to</div>` + (ts.length ? ts.map(t => `<button class="opt ${t.to === i.st ? 'cur' : ''}" data-id="${esc(t.id)}" data-to="${esc(t.to)}"><span class="st ${stClass(t.to, t.cat)}">${esc(t.to)}</span>${t.name !== t.to ? `<span style="color:var(--muted);font-size:12px">${esc(t.name)}</span>` : ''}</button>`).join('') : '<div class="empty">No transitions available.</div>');
     placeMenu(b); menu.querySelector('.opt')?.focus();
     menu.querySelectorAll('.opt').forEach(o => o.onclick = () => { closeMenu(); save(i, 'status', 'transition', { id: o.dataset.id }, b, `status → ${esc(o.dataset.to)}`); });
@@ -345,7 +340,7 @@ document.addEventListener('click', async e => {
     // only the priorities this issue's project allows (priority schemes), in the configured order
     openMenu(b, `<div class="mh">Priority</div><div class="empty">Loading…</div>`);
     let allowed;
-    try { allowed = new Set(await api(`/api/issue/${encodeURIComponent(i.k)}/priorities`)); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+    try { allowed = new Set(await api('priorities', { key: i.k })); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
     const opts = D.priorities.filter(p => allowed.has(p.name));
     menu.innerHTML = `<div class="mh">Priority</div>` + (opts.map(p => `<button class="opt ${p.name === i.pr ? 'cur' : ''}" data-v="${esc(p.name)}">${priIcon(p.name)}${esc(p.name)}</button>`).join('') || '<div class="empty">No priorities available.</div>');
     placeMenu(b); menu.querySelector('.opt')?.focus();
@@ -358,7 +353,7 @@ document.addEventListener('click', async e => {
     const search = async q => {
       const my = ++seq;
       let users;
-      try { users = await api(`/api/issue/${encodeURIComponent(i.k)}/assignable?q=${encodeURIComponent(q)}`); } catch (err) { lst.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+      try { users = await api('assignable', { key: i.k, q }); } catch (err) { lst.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
       if (my !== seq) return;   // a newer search is on its way
       const opts = [...(q && !'unassigned'.includes(q.toLowerCase()) ? [] : [{ name: '', displayName: null }]), ...users];
       lst.innerHTML = opts.map(u => `<button class="opt ${(u.name || null) === (i.an || null) ? 'cur' : ''}" data-v="${esc(u.name)}" data-d="${esc(u.displayName || '')}">${avatar(u.displayName, u.avatar)}${u.displayName ? esc(title(u.displayName)) : '<i>Unassigned</i>'}</button>`).join('') || '<div class="empty">Nobody matches.</div>';
@@ -451,7 +446,7 @@ async function load(refresh) {
   dot.className = 'dot busy'; now.textContent = 'loading…';
   if (!D) document.getElementById('tbody').innerHTML = '<tr><td class="empty">Loading from Jira…</td></tr>';
   let data;
-  try { data = await api('/api/data' + (refresh ? '?refresh=1' : '')); }
+  try { data = await api('data', { refresh: !!refresh }); }
   catch (e) {
     dot.className = 'dot err'; now.textContent = 'error';
     toast(`Could not load from Jira: ${esc(e.message)}`, true);
@@ -481,4 +476,10 @@ async function load(refresh) {
   document.getElementById('sync').title = `Loaded from Jira at ${D.fetchedAt}. ← → switches bubble.`;
   setTab(state.tab); rerender();
 }
-load(false);
+// Wait for startup (config, token, Jira checks) before the first load.
+async function boot() {
+  const s = await api('app_status');
+  if (s.state === 'starting') return setTimeout(boot, 250);
+  load(false);
+}
+boot();

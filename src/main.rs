@@ -1,82 +1,62 @@
-//! jiraf: a lean, stateless follow-up dashboard over Jira (Data Center) Plans.
+//! jiraf: a lean, stateless follow-up dashboard over Jira (Data Center) Plans, as a desktop app.
 //!
-//! Startup: load `.env` and `jiraf.toml` ([`config`]), check the token against Jira, resolve the
-//! Extended Status field name, then serve the page and JSON API ([`api`]) on localhost, guarded by
-//! [`local_only`]. All Jira traffic goes through [`jira`].
+//! Startup: resolve the config folder, then run [`app::init`] in the background (config, token,
+//! Jira, field ids) while the window shows the page. The page talks to the [`api`] commands over
+//! Tauri's IPC; no port is opened. All Jira traffic goes through [`jira`].
+
+// No console window behind the app on Windows release builds.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod api;
 mod app;
 mod config;
 mod jira;
 
-use actix_web::body::MessageBody;
-use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::middleware::{Logger, Next, from_fn};
-use actix_web::{App, Error, HttpServer, error, http::Method, web};
-use anyhow::Context;
+use std::path::PathBuf;
+use tauri::Manager;
 
-/// The server only ever listens on localhost, but a browser can still be tricked into talking to it:
-/// reject foreign Host headers (DNS rebinding) and require a custom header on writes, which other
-/// origins can't send without a CORS preflight we never grant.
-async fn local_only(req: ServiceRequest, next: Next<impl MessageBody>) -> Result<ServiceResponse<impl MessageBody>, Error> {
-    let allowed = req.app_data::<web::Data<Vec<String>>>().cloned();
-    let host = req.connection_info().host().to_string();
-    if let Some(allowed) = allowed
-        && !allowed.contains(&host)
-    {
-        return Err(error::ErrorForbidden("unexpected Host header"));
-    }
-    if req.method() != Method::GET {
-        if req.headers().get("x-jiraf").and_then(|v| v.to_str().ok()) != Some("1") {
-            return Err(error::ErrorForbidden("missing X-Jiraf header"));
-        }
-        if let Some(origin) = req.headers().get("origin").and_then(|v| v.to_str().ok())
-            && origin != format!("http://{host}")
-        {
-            return Err(error::ErrorForbidden("cross-origin write"));
-        }
-    }
-    next.call(req).await
-}
-
-/// Entry point: `jiraf`, reading `jiraf.toml` and `.env` from the current directory.
+/// The config folder: `$JIRAF_CONFIG_DIR` if set (handy with `cargo tauri dev`), else the app's
+/// config folder (`~/Library/Application Support/com.dmbuil.jiraf/` on macOS).
 ///
 /// # Errors
-/// Fails fast on a bad config, an invalid token, an unknown Extended Status field id, or a busy port.
-#[actix_web::main]
-async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,actix_server=warn")).init();
+/// If the platform has no config folder.
+fn config_dir(app: &tauri::App) -> tauri::Result<PathBuf> {
+    match std::env::var_os("JIRAF_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        Some(d) => Ok(PathBuf::from(d)),
+        None => app.path().app_config_dir(),
+    }
+}
 
-    let st = app::init(&std::env::current_dir()?).await?;
-    let bind = st.cfg.server.bind.clone().unwrap_or_else(|| "127.0.0.1:8080".into());
-    let port = bind.rsplit(':').next().unwrap_or("8080").to_string();
-    let hosts: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
-    let state = web::Data::new(st);
+/// Entry point: open the window at once and start [`app::init`] in the background.
+fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("jiraf on http://{bind}/");
-    HttpServer::new(move || {
-        App::new()
-            .app_data(state.clone())
-            .app_data(web::Data::new(hosts.clone()))
-            .wrap(from_fn(local_only))
-            .wrap(Logger::new("%r %s %Dms"))
-            .service(api::index)
-            .service(api::app_js)
-            .service(api::icon)
-            .service(api::data)
-            .service(api::transitions)
-            .service(api::priorities)
-            .service(api::assignable)
-            .service(api::set_ext)
-            .service(api::set_priority)
-            .service(api::set_assignee)
-            .service(api::set_target)
-            .service(api::set_due)
-            .service(api::transition)
-    })
-    .bind(&bind)
-    .with_context(|| format!("binding {bind}"))?
-    .run()
-    .await?;
-    Ok(())
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let dir = config_dir(app)?;
+            log::info!("config folder: {}", dir.display());
+            app.manage(app::Holder::new(dir.clone()));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let r = app::init(&dir).await;
+                handle.state::<app::Holder>().set(r);
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app::app_status,
+            api::data,
+            api::transitions,
+            api::priorities,
+            api::assignable,
+            api::set_ext,
+            api::set_priority,
+            api::set_assignee,
+            api::set_target,
+            api::set_due,
+            api::transition,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running jiraf");
 }

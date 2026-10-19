@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The dashboard window: core APIs only. The opener plugin is used from Rust, never granted to the page.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
