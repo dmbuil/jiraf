@@ -22,6 +22,7 @@ that calls Tauri commands. Nothing is stored except config, an icon cache, a log
 | `src/logging.rs` | `jiraf.log` in the config folder |
 | `static/` | `index.html` (markup + all CSS), `app.js` (dashboard), `settings.js` (Settings screen) |
 | `tauri.conf.json`, `capabilities/` | window, CSP, bundle, permissions |
+| `.github/workflows/build.yml` | CI: tests + clippy on macOS and Windows; bundles for `main` and `v*` tags (attached to the release) |
 | `app-icons/` | bundle icons (not `icons/`, which is the git-ignored Jira icon cache) |
 | `docs/superpowers/` | designs (`specs/`) and implementation plans (`plans/`) |
 

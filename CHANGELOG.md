@@ -4,6 +4,12 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Added
+
+- **Windows and Intel Mac builds.** A GitHub workflow tests jiraf on macOS and Windows and builds a
+  universal macOS `.dmg` and a Windows installer (`.exe` and `.msi`). Release builds are attached to
+  the GitHub release.
+
 ## [0.2.0] - 2026-10-19
 
 jiraf becomes a native desktop app (Tauri 2) with a Settings screen. No more terminal, browser tab or

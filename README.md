@@ -58,8 +58,8 @@ opens in its own window. No terminal, no browser tab, no local server.
 
 | What                                                   | Why                                                                                                    |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| **macOS** (Apple Silicon)                              | the only platform built today (Windows is planned)                                                     |
-| **Rust 1.88+** (`rustup update`)                       | to build jiraf                                                                                         |
+| **macOS** 10.15+ or **Windows** 10/11                  | ready-made builds on the [releases page](https://github.com/dmbuil/jiraf/releases); Windows is less tested |
+| **Rust 1.88+** (`rustup update`)                       | only to build jiraf yourself                                                                           |
 | **Tauri CLI 2** (`cargo install tauri-cli --version "^2" --locked`) | to build the `.app`                                                                       |
 | **Jira Data Center / Server** with REST API v2         | data source (tested on Jira DC 10.3)                                                                   |
 | A Jira **Personal Access Token**                       | jiraf acts as you: it sees what you see and edits as you                                               |
@@ -68,6 +68,14 @@ opens in its own window. No terminal, no browser tab, no local server.
 | *Optional:* **ScriptRunner**                           | only for bubbles that follow a hierarchy (see the [recipe](#recipe-a-bubble-that-follows-a-hierarchy)) |
 
 ## Quick start
+
+Download the latest build from the [releases page](https://github.com/dmbuil/jiraf/releases):
+`jiraf_<version>_universal.dmg` for macOS (Apple silicon and Intel), `jiraf_<version>_x64-setup.exe`
+(or the `.msi`) for Windows. The builds are not signed: on macOS, right-click `jiraf.app` › **Open** the
+first time (or run `xattr -d com.apple.quarantine /Applications/jiraf.app`); on Windows, SmartScreen
+asks you to confirm with **More info › Run anyway**.
+
+Or build it yourself:
 
 ```sh
 git clone <this repo> jiraf && cd jiraf
@@ -78,7 +86,7 @@ Drag `jiraf.app` into **Applications** and open it. The first launch opens the *
 fill in your Jira URL, token, field ids and at least one bubble, then **Save**. jiraf checks them with
 Jira and loads the dashboard. Later, **Settings…** (⌘,) in the app menu brings it back.
 
-Everything lives in the config folder:
+Everything lives in the config folder (on Windows, `%APPDATA%\com.dmbuil.jiraf\`):
 
 ```
 ~/Library/Application Support/com.dmbuil.jiraf/
@@ -421,6 +429,18 @@ cargo tauri build --bundles app           # release .app
 cargo doc --no-deps --document-private-items --open   # API docs for every module, type and function
 ```
 
+### Builds and releases
+
+`.github/workflows/build.yml` runs the tests, clippy and the page checks on macOS and Windows for every
+push and pull request. Pushes to `main` also build the bundles (a universal `.dmg`; an NSIS `.exe` and
+an `.msi`) and keep them as workflow artifacts. To release:
+
+1. Move the `Unreleased` notes in `CHANGELOG.md` under a new version and set `version` in `Cargo.toml`.
+2. Tag and create the release: `git tag -s vX.Y.Z -m … && git push origin vX.Y.Z`, then
+   `gh release create vX.Y.Z --verify-tag --notes-file <notes>` straight away.
+3. The tag's workflow run attaches the bundles to that release. To rebuild an existing release, run
+   the workflow by hand: `gh workflow run build.yml -f tag=vX.Y.Z`.
+
 `JIRAF_CONFIG_DIR` points the app at any config folder; without it, the app uses its own
 (`~/Library/Application Support/com.dmbuil.jiraf/`). The log goes to `jiraf.log` in that folder.
 
@@ -433,6 +453,7 @@ src/api.rs       commands, cache, icon store, edits, link check
 src/logging.rs   log file
 static/          index.html (layout + styles) and app.js (rendering + interactions)
 tauri.conf.json  window, CSP, bundle; capabilities/ (page permissions)
+.github/         CI: tests on macOS + Windows, release bundles
 app-icons/       app icons: `cargo tauri icon app-icons/jiraf-icon-1024.png -o app-icons`
                  (that file is docs/jiraf-icon.png fitted to Apple's 824/1024 icon grid)
 docs/            the mascot, the app icon artwork, design and plan
