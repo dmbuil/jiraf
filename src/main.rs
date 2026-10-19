@@ -12,6 +12,7 @@ mod app;
 mod config;
 mod jira;
 mod logging;
+mod settings;
 
 use std::path::PathBuf;
 use tauri::menu::{Menu, MenuItem};
