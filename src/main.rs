@@ -54,6 +54,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app::app_status,
+            app::retry,
+            app::open_config_dir,
             api::data,
             api::transitions,
             api::priorities,

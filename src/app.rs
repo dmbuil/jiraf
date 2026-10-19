@@ -116,6 +116,26 @@ pub fn app_status(holder: tauri::State<'_, Holder>) -> Status {
     holder.status()
 }
 
+/// Run [`init`] again (after the config or token was fixed, or from Reload config) and return the
+/// new [`Status`].
+#[tauri::command]
+pub async fn retry(holder: tauri::State<'_, Holder>) -> Result<Status, ()> {
+    holder.restart();
+    let r = init(&holder.dir).await;
+    holder.set(r);
+    Ok(holder.status())
+}
+
+/// Open the config folder in Finder (Explorer on Windows).
+///
+/// # Errors
+/// If the system refuses to open it.
+#[tauri::command]
+pub fn open_config_dir(app: tauri::AppHandle, holder: tauri::State<'_, Holder>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(holder.dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

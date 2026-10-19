@@ -476,10 +476,28 @@ async function load(refresh) {
   document.getElementById('sync').title = `Loaded from Jira at ${D.fetchedAt}. ← → switches bubble.`;
   setTab(state.tab); rerender();
 }
-// Wait for startup (config, token, Jira checks) before the first load.
+/* ---------- startup: wait for the config/token/Jira checks, then the dashboard or the error screen ---------- */
+const startup = document.getElementById('startup');
+function showStartupError(s) {
+  document.getElementById('startupMsg').textContent = s.error;
+  document.getElementById('startupDir').textContent = s.configDir;
+  document.getElementById('retry').disabled = false; document.getElementById('retry').textContent = 'Retry';
+  document.body.classList.add('failed'); startup.hidden = false;
+}
 async function boot() {
   const s = await api('app_status');
   if (s.state === 'starting') return setTimeout(boot, 250);
+  if (s.state === 'failed') return showStartupError(s);
   load(false);
 }
+// Re-read jiraf.toml and .env and run the checks again (Retry button, Reload config menu).
+async function retryFlow() {
+  const b = document.getElementById('retry');
+  b.disabled = true; b.textContent = 'Retrying…';
+  document.getElementById('dot').className = 'dot busy'; document.getElementById('now').textContent = 'loading…';
+  const s = await api('retry');
+  if (s.state === 'ready') location.reload(); else showStartupError(s);
+}
+document.getElementById('retry').onclick = retryFlow;
+document.getElementById('openDir').onclick = () => api('open_config_dir').catch(e => toast(esc(e.message), true));
 boot();
