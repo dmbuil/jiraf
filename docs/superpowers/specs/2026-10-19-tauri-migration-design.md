@@ -19,12 +19,13 @@ in this design should make that harder, but nothing is built for it yet.
 
 1. A `.app` built locally with the Tauri CLI. Launching it opens one window showing the dashboard.
    Closing the window quits the app.
-2. The Rust backend talks to the page through Tauri commands, not HTTP. **No port is opened.** actix-web
-   and the `local_only` middleware / `X-Jiraf` header are removed.
+2. The Rust backend talks to the page through Tauri commands, not HTTP. **No port is opened.**
+   actix-web and the `local_only` middleware / `X-Jiraf` header are removed.
 3. Config (`jiraf.toml`) and secret (`.env` with `JIRA_TOKEN`) live in the app's config folder under
    `~/Library/Application Support/` and are still edited by hand.
 4. Startup failures (bad config, missing/expired token, Jira unreachable, unknown field id) show an
-   error screen in the window with the message, a **Retry** button and an **Open config folder** button.
+   error screen in the window with the message, a **Retry** button and an **Open config folder**
+   button.
 5. Config edits made while the app runs take effect by restarting the app or with a reload action
    (see "Reload").
 6. External links (issue keys, label chips, JQL ↗, "All comments in Jira ↗") open in the default
@@ -32,12 +33,13 @@ in this design should make that harder, but nothing is built for it yet.
 
 ## Non-goals (for now)
 
-- Windows / Linux builds. macOS (Apple Silicon) only for now, **but nothing may block a later Windows
-  build**: no macOS-only APIs or hard-coded macOS URLs/paths. A GitHub Action building both the macOS
-  and Windows bundles is planned as follow-up work.
+- Windows / Linux builds. macOS (Apple Silicon) only for now,
+  **but nothing may block a later Windows build**: no macOS-only APIs or hard-coded macOS
+  URLs/paths. A GitHub Action building both the macOS and Windows bundles is planned as follow-up
+  work.
 - Code signing, notarization, DMG, auto-update, distribution to others.
-- A settings screen. A settings menu is planned later; keep config loading isolated so it can plug in
-  without a rewrite, but don't build any of it.
+- A settings screen. A settings menu is planned later; keep config loading isolated so it can plug
+  in without a rewrite, but don't build any of it.
 - Keychain storage for the token. The `.env` file stays.
 - Keeping a browser/server mode alongside the app.
 - Tray/menu-bar icon, background service, multiple windows.
@@ -48,7 +50,8 @@ in this design should make that harder, but nothing is built for it yet.
 - Opening any local TCP port.
 - Storing anything beyond: config files, the icon cache, a log file, and window size/position.
 - Breaking an existing `jiraf.toml`: the user's current file must load unchanged.
-- Introducing a JS bundler / npm toolchain. The frontend stays plain `static/index.html` + `static/app.js`.
+- Introducing a JS bundler / npm toolchain. The frontend stays plain `static/index.html` +
+  `static/app.js`.
 - Weakening the current safety posture: CSP stays strict, the icon proxy keeps its path whitelist,
   issue keys keep `check_key`, and the page can't make the app open arbitrary URLs.
 
@@ -67,10 +70,10 @@ in this design should make that harder, but nothing is built for it yet.
 ### Project layout (my call)
 
 Keep the single crate at the repo root rather than moving it into `src-tauri/`; the history stays
-readable and the diff small. Add at the root: `tauri.conf.json`, `build.rs` (`tauri_build::build()`),
-`capabilities/default.json`. App icons for the bundle go in `app-icons/` (set via `bundle.icon`, including `icon.ico` for a later
-Windows build),
-**not** `icons/`, because `/icons` is today's git-ignored Jira icon cache.
+readable and the diff small. Add at the root: `tauri.conf.json`, `build.rs`
+(`tauri_build::build()`), `capabilities/default.json`. App icons for the bundle go in `app-icons/`
+(set via `bundle.icon`, including `icon.ico` for a later Windows build), **not** `icons/`, because
+`/icons` is today's git-ignored Jira icon cache.
 
 Bundle identifier: `com.dmbuil.jiraf` (my call). Product name: `jiraf`. `frontendDist`: `static`.
 
@@ -81,9 +84,9 @@ Bundle identifier: `com.dmbuil.jiraf` (my call). Product name: `jiraf`. `fronten
   `cargo tauri dev` run against the repo's own `jiraf.toml` / `.env`.
 - Contents: `jiraf.toml`, `.env`, `icons/` (the cache), `jiraf.log`.
 - First launch: if the folder doesn't exist, create it and write `jiraf.example.toml` and
-  `.env.example` (both compiled in with `include_str!`). Never write `jiraf.toml` or `.env` themselves.
-  Startup then fails with a "copy jiraf.example.toml to jiraf.toml and .env.example to .env and fill
-  them in" error screen.
+  `.env.example` (both compiled in with `include_str!`). Never write `jiraf.toml` or `.env`
+  themselves. Startup then fails with a "copy jiraf.example.toml to jiraf.toml and .env.example to
+  .env and fill them in" error screen.
 - `[server] icon_dir`: a relative path resolves against the config folder; absolute paths are used
   as-is. Default stays `icons`.
 - `[server] bind`: still accepted so existing files load, but ignored. If present, log a warning
@@ -91,27 +94,29 @@ Bundle identifier: `com.dmbuil.jiraf` (my call). Product name: `jiraf`. `fronten
 
 ### Token loading
 
-Today `Config::load` reads `JIRA_TOKEN` from the process environment after `dotenvy::dotenv()`.
-That breaks Retry/Reload: dotenvy never overrides a variable already set, so an edited `.env` would be
-ignored. Instead, parse `<config dir>/.env` on every load (e.g. `dotenvy::from_path_iter`) and pass the
-token into config loading explicitly. A `JIRA_TOKEN` in the real process environment, if present,
-wins (keeps `cargo tauri dev` convenient). Same error messages as today ("JIRA_TOKEN is not set…",
-"JIRA_TOKEN is empty"), but naming the full path of the `.env` file.
+Today `Config::load` reads `JIRA_TOKEN` from the process environment after `dotenvy::dotenv()`. That
+breaks Retry/Reload: dotenvy never overrides a variable already set, so an edited `.env` would be
+ignored. Instead, parse `<config dir>/.env` on every load (e.g. `dotenvy::from_path_iter`) and pass
+the token into config loading explicitly. A `JIRA_TOKEN` in the real process environment, if
+present, wins (keeps `cargo tauri dev` convenient). Same error messages as today ("JIRA_TOKEN is not
+set…", "JIRA_TOKEN is empty"), but naming the full path of the `.env` file.
 
 ### Startup and app state
 
 Startup work that is in `main()` today (load config, build `Jira`, `GET /rest/api/2/myself`, resolve
 the Extended Status field name, build `AppState`) moves into one function, e.g.
-`async fn init(config_dir: &Path) -> anyhow::Result<AppState>`. This is the seam a settings screen will
-reuse later.
+`async fn init(config_dir: &Path) -> anyhow::Result<AppState>`. This is the seam a settings screen
+will reuse later.
 
 The window opens immediately (showing the page's existing loading state) and `init` runs in the
 background. Managed state is a holder such as `RwLock<Phase>` where `Phase` is
 `Starting | Ready(Arc<AppState>) | Failed(String)`.
 
 Commands for the page:
-- `app_status()` → `{ "state": "starting" | "ready" | "failed", "error"?: string, "configDir": string }`.
-  The page calls this first; while `starting`, it waits (polling or a Tauri event, builder's choice).
+
+- `app_status()` →
+  `{ "state": "starting" | "ready" | "failed", "error"?: string, "configDir": string }`. The page
+  calls this first; while `starting`, it waits (polling or a Tauri event, builder's choice).
 - `retry()` → runs `init` again, swaps the result into the holder, returns the new status.
 - `open_config_dir()` → reveals the config folder in Finder.
 
@@ -123,18 +128,18 @@ ready" if the phase isn't `Ready`.
 Each actix handler in `src/api.rs` becomes a `#[tauri::command]` with the same logic and validation
 (`check_key`, length limits, digit-only transition ids, cache invalidation in `after_write`):
 
-| Today | Command (args) |
-|---|---|
-| `GET /api/data[?refresh=1]` | `data(refresh: bool)` |
-| `GET /api/issue/{key}/transitions` | `transitions(key)` |
-| `GET /api/issue/{key}/priorities` | `priorities(key)` |
-| `GET /api/issue/{key}/assignable?q=` | `assignable(key, q)` |
-| `POST …/ext` `{value}` | `set_ext(key, value)` |
-| `POST …/priority` `{name}` | `set_priority(key, name)` |
-| `POST …/assignee` `{name}` | `set_assignee(key, name: Option)` |
-| `POST …/target` `{date}` | `set_target(key, date: Option)` |
-| `POST …/due` `{date}` | `set_due(key, date: Option)` |
-| `POST …/transition` `{id}` | `transition(key, id)` |
+| Today                                | Command (args)                    |
+| ------------------------------------ | --------------------------------- |
+| `GET /api/data[?refresh=1]`          | `data(refresh: bool)`             |
+| `GET /api/issue/{key}/transitions`   | `transitions(key)`                |
+| `GET /api/issue/{key}/priorities`    | `priorities(key)`                 |
+| `GET /api/issue/{key}/assignable?q=` | `assignable(key, q)`              |
+| `POST …/ext` `{value}`               | `set_ext(key, value)`             |
+| `POST …/priority` `{name}`           | `set_priority(key, name)`         |
+| `POST …/assignee` `{name}`           | `set_assignee(key, name: Option)` |
+| `POST …/target` `{date}`             | `set_target(key, date: Option)`   |
+| `POST …/due` `{date}`                | `set_due(key, date: Option)`      |
+| `POST …/transition` `{id}`           | `transition(key, id)`             |
 
 Errors: commands return `Result<T, String>` (or a serializable error type) carrying the same message
 text the page shows today (`ApiError`'s message, Jira's own message for `JiraError`). HTTP status
@@ -144,12 +149,12 @@ codes go away; keep logging each error with `log::warn!` as `error_response` doe
 
 ### Page changes (`static/app.js`, `static/index.html`)
 
-- `api()` becomes a thin wrapper over `invoke(command, args)` that throws `Error(message)` on failure,
-  so callers' `try/catch` and inline error rendering keep working. Call sites switch from URL paths to
-  command names.
+- `api()` becomes a thin wrapper over `invoke(command, args)` that throws `Error(message)` on
+  failure, so callers' `try/catch` and inline error rendering keep working. Call sites switch from
+  URL paths to command names.
 - New error screen in `index.html`, hidden by default: the mascot, the message, the config folder
-  path, **Retry** and **Open config folder** buttons. Shown when `app_status()` is `failed`. Retry shows
-  the loading state, calls `retry()`, then either loads the dashboard or shows the new error.
+  path, **Retry** and **Open config folder** buttons. Shown when `app_status()` is `failed`. Retry
+  shows the loading state, calls `retry()`, then either loads the dashboard or shows the new error.
   Mid-session errors (Jira down, a failed edit) keep using today's red dot and inline messages.
 - Theme toggle (localStorage) and hash routing (`#p=…&t=…`) are unchanged.
 
@@ -157,8 +162,8 @@ codes go away; keep logging each error with `log::warn!` as `error_response` doe
 
 The `/icon?u=<jira path>` proxy becomes a custom URI scheme registered with
 `register_asynchronous_uri_scheme_protocol("jiraf", …)`. The origin differs per platform:
-`jiraf://localhost` on macOS/Linux, `http://jiraf.localhost` on Windows (WebView2), chosen at compile
-time. `icon_url` / `local_avatar` produce `<origin>/icon?u=<path>`. The handler reuses
+`jiraf://localhost` on macOS/Linux, `http://jiraf.localhost` on Windows (WebView2), chosen at
+compile time. `icon_url` / `local_avatar` produce `<origin>/icon?u=<path>`. The handler reuses
 `check_icon_path`, `ICON_PREFIXES`, the memory → disk → Jira lookup, and returns the cached content
 type plus `Cache-Control: max-age=86400` as today.
 
@@ -170,32 +175,32 @@ only the additions Tauri needs: IPC (`connect-src ipc: http://ipc.localhost`) an
 
 ### External links
 
-All `target="_blank"` links point at the Jira base URL. A click handler in `app.js` (event delegation
-on `a[target=_blank]`) prevents the default and calls an `open_external(url)` command. My call: that
-command opens the URL with the opener plugin's Rust API **only if** it starts with the configured Jira
-base URL followed by `/`. Anything else is refused and logged. The JS opener API is not exposed to
-the page, so the page can't open arbitrary URLs.
+All `target="_blank"` links point at the Jira base URL. A click handler in `app.js` (event
+delegation on `a[target=_blank]`) prevents the default and calls an `open_external(url)` command. My
+call: that command opens the URL with the opener plugin's Rust API **only if** it starts with the
+configured Jira base URL followed by `/`. Anything else is refused and logged. The JS opener API is
+not exposed to the page, so the page can't open arbitrary URLs.
 
 ### Reload
 
-The user is fine with either "restart the app" or "a reload button". My call: add a **Reload config**
-item (⌘⇧R) to the app's native menu. It runs the same path as `retry()`. On success the page reloads
-its data; on failure the page shows the error screen (the config is broken anyway). The ↻ button in
-the page keeps meaning "refetch from Jira" (`data(refresh: true)`).
+The user is fine with either "restart the app" or "a reload button". My call: add a
+**Reload config** item (⌘⇧R) to the app's native menu. It runs the same path as `retry()`. On
+success the page reloads its data; on failure the page shows the error screen (the config is broken
+anyway). The ↻ button in the page keeps meaning "refetch from Jira" (`data(refresh: true)`).
 
 ### Window
 
-One window titled `jiraf`, sensible default size (e.g. 1400×900), resizable. On Windows the same item lands in the window's
-menu bar and ⌘⇧R reads Ctrl+Shift+R. Remember size and
-position between launches with `tauri-plugin-window-state` (my call). Closing the window quits the app.
-Keep the default macOS app menu (Edit menu needed for copy/paste in inputs) plus Reload config.
+One window titled `jiraf`, sensible default size (e.g. 1400×900), resizable. On Windows the same
+item lands in the window's menu bar and ⌘⇧R reads Ctrl+Shift+R. Remember size and position between
+launches with `tauri-plugin-window-state` (my call). Closing the window quits the app. Keep the
+default macOS app menu (Edit menu needed for copy/paste in inputs) plus Reload config.
 
 ### Logging
 
-Replace stderr logging with a log file `jiraf.log` in the config folder (e.g. `tauri-plugin-log` with
-a folder target, or `env_logger` writing to the file). Default filter `info`. `RUST_LOG` read from the
-real environment or from `.env` sets the level, since apps launched from Finder have no shell
-environment.
+Replace stderr logging with a log file `jiraf.log` in the config folder (e.g. `tauri-plugin-log`
+with a folder target, or `env_logger` writing to the file). Default filter `info`. `RUST_LOG` read
+from the real environment or from `.env` sets the level, since apps launched from Finder have no
+shell environment.
 
 ### Build and docs
 
@@ -206,14 +211,15 @@ environment.
   location, how to move an existing `jiraf.toml` / `.env` there, and the log file location. Update
   the module docs in `main.rs` / `api.rs` (the route table becomes a command table).
 - `.gitignore`: add Tauri's generated `gen/` folder if the CLI creates one.
-- The `jiraf path/to/jiraf.toml` command-line argument goes away (my call); `JIRAF_CONFIG_DIR` replaces it.
+- The `jiraf path/to/jiraf.toml` command-line argument goes away (my call); `JIRAF_CONFIG_DIR`
+  replaces it.
 
 ### Tests
 
 Besides keeping the existing tests green, add unit tests for the new pure logic (my call): the
 `open_external` URL check (base URL + `/` prefix, rejects look-alike hosts such as
-`https://jira.example.com.evil`), `icon_dir` resolution (relative vs absolute), and `.env` token parsing
-(file value, process env override, missing/empty token messages).
+`https://jira.example.com.evil`), `icon_dir` resolution (relative vs absolute), and `.env` token
+parsing (file value, process env override, missing/empty token messages).
 
 ## Left to the builder
 

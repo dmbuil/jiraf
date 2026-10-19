@@ -3,6 +3,7 @@
 # (re)build an existing release, run the workflow by hand with its tag.
 #
 #   test   ─► bundle (not for pull requests) ─► attach to the release (tags / manual runs with a tag)
+#   markdown (alongside: lints every .md file)
 name: build
 
 on:
@@ -65,6 +66,21 @@ jobs:
       # node is preinstalled on both runners; bash so `&&` works on Windows too.
       - run: node --check static/app.js && node --check static/settings.js
         shell: bash
+
+  # Markdown style (.rumdl.toml): the same `rumdl check .` as CONTRIBUTING.md asks for locally.
+  # Platform-independent, so one Linux runner is enough.
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      # rumdl's own action: installs the pinned version and runs `rumdl check`; violations show up
+      # as annotations on the pull request's files.
+      - uses: rvben/rumdl@v0
+        with:
+          version: "0.3.0"
+          report-type: annotations
 
   # Build the installable bundles, once the tests pass on both platforms.
   bundle:

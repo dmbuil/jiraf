@@ -1,0 +1,61 @@
+# Markdown style for jiraf: `rumdl check .` lints, `rumdl fmt .` fixes (see CONTRIBUTING.md).
+# Everything not set here uses rumdl's defaults (markdownlint-compatible).
+
+[global]
+# LICENSE.md is the standard MIT text; keep it as published.
+exclude = ["target", "mockup", "icons", "gen", "LICENSE.md"]
+respect-gitignore = true
+
+[per-file-ignores]
+# CLAUDE.md is a single `@AGENTS.md` import line, not a document.
+"CLAUDE.md" = ["MD041"]
+# Plans quote exact signatures and commands in inline code, which can't be wrapped.
+"docs/superpowers/plans/**" = ["MD013"]
+
+# Prose wraps at 100 characters; `rumdl fmt` rewraps paragraphs and list items. Code blocks, tables,
+# headings and long URLs are left alone.
+[MD013]
+line-length = 100
+code-blocks = false
+tables = false
+headings = false
+reflow = true
+
+# ATX headings (`## Title`), `-` bullets, `*emphasis*`, `**strong**`, ``` fences.
+[MD003]
+style = "atx"
+
+[MD004]
+style = "dash"
+
+[MD049]
+style = "asterisk"
+
+[MD050]
+style = "asterisk"
+
+[MD046]
+style = "fenced"
+
+[MD048]
+style = "backtick"
+
+[MD035]
+style = "---"
+
+# Numbered lists count up: 1. 2. 3.
+[MD029]
+style = "ordered"
+
+# Changelog sections repeat "Added", "Fixed"… under each version.
+[MD024]
+siblings-only = true
+
+# Tables keep their columns aligned.
+[MD060]
+enabled = true
+style = "aligned"
+
+# Inline HTML only for the README header (centred logo and links).
+[MD033]
+allowed-elements = ["div", "img", "picture", "source", "br"]

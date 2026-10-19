@@ -5,10 +5,10 @@ Date: 2026-10-19 · Branch: `tauri`
 ## Intent
 
 Today every change to jiraf's setup means opening `jiraf.toml` or `.env` in the config folder and
-editing them by hand. The two edits that actually happen are **changing the bubbles' JQL** (worked out
-in Jira first, then pasted in) and **renewing an expired Jira token**. Tabs change now and then; the
-rest is set once. The user wants all of it editable from inside the app, so the files never need to be
-opened. This is the "settings menu" the Tauri migration design deferred.
+editing them by hand. The two edits that actually happen are **changing the bubbles' JQL** (worked
+out in Jira first, then pasted in) and **renewing an expired Jira token**. Tabs change now and then;
+the rest is set once. The user wants all of it editable from inside the app, so the files never need
+to be opened. This is the "settings menu" the Tauri migration design deferred.
 
 Users: the author, on their own Mac (Windows build planned). Same as the app.
 
@@ -22,8 +22,8 @@ Users: the author, on their own Mac (Windows build planned). Same as the app.
    1. **Jira**: URL, token, cache seconds.
    2. **Fields**: the six custom field ids (`extended_status`, `activity_type`, `parent_link`,
       `epic_link`, `target_start`, `target_end`) as text inputs.
-   3. **Follow-up**: `stale_days`, `done_days`, `ext_max_len`, `initiative_type`, and the two ordered
-      lists `hierarchy` and `priority_order` (reorderable chips; add/remove).
+   3. **Follow-up**: `stale_days`, `done_days`, `ext_max_len`, `initiative_type`, and the two
+      ordered lists `hierarchy` and `priority_order` (reorderable chips; add/remove).
    4. **Tabs**: one card per tab with name, Activity Type values (chips), "also holds items with no
       Activity Type" (`include_unset`), pinned issue keys (chips). Add, delete, reorder.
    5. **Bubbles**: one card per bubble with name, JQL (multi-line box the user pastes into), icon
@@ -43,20 +43,21 @@ Users: the author, on their own Mac (Windows build planned). Same as the app.
    - **Warning only** (saved anyway, the warning shows on that bubble): a JQL that Jira rejects.
      The user explicitly chose "save it anyway and warn me".
    - **Jira unreachable** (off VPN, timeout, 5xx) while checking: the save is not blocked. The Jira
-     checks are skipped and Settings says "couldn't verify with Jira" (my call: on-prem Jira is often
-     out of reach, and a typo fix must not need the VPN). The same applies to the error screen's
-     token paste box: it saves, then retries.
+     checks are skipped and Settings says "couldn't verify with Jira" (my call: on-prem Jira is
+     often out of reach, and a typo fix must not need the VPN). The same applies to the error
+     screen's token paste box: it saves, then retries.
 7. **A broken bubble doesn't break the dashboard** (user's choice): if one bubble's search fails in
    Jira, the dashboard still loads; that bubble shows as broken and empty, with Jira's message on it
    (e.g. in its tooltip and as the table's empty message when selected). A bubble whose `exclude`
    points at a broken bubble is broken too (its JQL contains the bad one). Today `jira::load_issues`
-   fails the whole load on the first failed search; that changes to a per-bubble result. A network or
-   auth failure (Jira down, token rejected) still fails the whole load as today.
+   fails the whole load on the first failed search; that changes to a per-bubble result. A network
+   or auth failure (Jira down, token rejected) still fails the whole load as today.
 
 ## Non-goals
 
 - A JQL builder, autocomplete or live preview. The user writes JQL in Jira and pastes it.
-- A field picker fetched from Jira's field list (set-once values; plain text plus a check is enough).
+- A field picker fetched from Jira's field list (set-once values; plain text plus a check is
+  enough).
 - Editing `icon_dir` or `bind` (cache location / ignored); they stay file-only and are preserved.
 - Keychain storage for the token; it stays in `.env`.
 - A separate settings window, multiple profiles, import/export, undo history.
