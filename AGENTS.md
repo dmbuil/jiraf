@@ -59,9 +59,8 @@ tests skip themselves when it is set.
 - Rust 2024 edition (let-chains are fine). Rustdoc on every item, an `# Errors` section on fallible
   functions, terse comments that say why. Match the surrounding code.
 - Test-first for Rust logic: write the failing test, watch it fail (`cargo nextest run <name>`), then
-  implement. Pure logic goes in
-  `#[cfg(test)]` modules next to the code; Jira calls are tested against a local fake (see
-  `settings.rs` tests).
+  implement. Pure logic goes in `#[cfg(test)]` modules next to the code; Jira calls are tested
+  against a local fake (see `settings.rs` tests).
 - File writes in the config folder are atomic (`.tmp` + rename) and keep permissions; `.env` is
   owner-only and only its `JIRA_TOKEN` line is ever rewritten.
 - Bubble and tab ids are stable: never change an existing id (it is in the URL hash and in `exclude`).
