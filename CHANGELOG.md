@@ -4,6 +4,11 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Changed
+
+- Settings: **Open config folder** (was **Open jiraf.toml**) shows the folder with `jiraf.toml`
+  selected, instead of opening the file in whatever app claims `.toml` files.
+
 ### Fixed
 
 - On macOS 26 the app icon showed small, inside a gray frame. The artwork now fills Apple's

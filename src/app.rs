@@ -196,23 +196,20 @@ pub fn open_config_dir(app: tauri::AppHandle, holder: tauri::State<'_, Holder>) 
     app.opener().open_path(holder.dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Open `jiraf.toml` in the default app for `.toml` files, for hand edits; if no app takes it, reveal
-/// it in Finder (Explorer on Windows) instead.
+/// Show the config folder in Finder (Explorer on Windows) with `jiraf.toml` selected, for hand edits;
+/// before the first save there is no file to select, so just open the folder.
 ///
 /// # Errors
-/// If there is no `jiraf.toml` yet, or the system can neither open nor reveal it.
+/// If the system refuses to show it.
 #[tauri::command]
-pub fn open_config_file(app: tauri::AppHandle, holder: tauri::State<'_, Holder>) -> Result<(), String> {
+pub fn show_config_file(app: tauri::AppHandle, holder: tauri::State<'_, Holder>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let path = holder.dir.join(config::CONFIG_FILE);
-    if !path.exists() {
-        return Err(format!("{} doesn't exist yet: Save first", path.display()));
+    if path.exists() {
+        app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
+    } else {
+        app.opener().open_path(holder.dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
     }
-    if let Err(e) = app.opener().open_path(path.display().to_string(), None::<&str>) {
-        log::info!("no app opens {}: {e}; revealing it instead", path.display());
-        app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

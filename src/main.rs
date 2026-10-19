@@ -88,7 +88,7 @@ fn main() {
             app::app_status,
             app::retry,
             app::open_config_dir,
-            app::open_config_file,
+            app::show_config_file,
             api::data,
             api::transitions,
             api::priorities,

@@ -376,7 +376,7 @@ See the `beta-core` bubble in [`jiraf.example.toml`](jiraf.example.toml) for the
 | Command                                 | Purpose                                            |
 | --------------------------------------- | -------------------------------------------------- |
 | `app_status`, `retry`, `open_config_dir` | startup state, Retry / Reload config, Finder      |
-| `open_config_file`                      | open `jiraf.toml` in your editor (from Settings)   |
+| `show_config_file`                      | config folder with `jiraf.toml` selected (Settings) |
 | `data { refresh }`                      | the dashboard payload                              |
 | `transitions { key }`                   | transitions available for the status menu          |
 | `priorities { key }`                    | priorities the issue allows, for the priority menu |
