@@ -44,6 +44,14 @@ fn main() {
             });
             Ok(())
         })
+        // Jira icons and avatars, fetched with the token and cached (see `api::icon_response`).
+        .register_asynchronous_uri_scheme_protocol("jiraf", |ctx, req, responder| {
+            let app = ctx.app_handle().clone();
+            let uri = req.uri().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(api::icon_response(&app.state::<app::Holder>(), &uri).await);
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             app::app_status,
             api::data,

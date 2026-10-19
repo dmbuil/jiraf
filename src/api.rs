@@ -107,16 +107,25 @@ fn check_key(key: &str) -> ApiResult<()> {
 
 /* ---------- page + icons ---------- */
 
-/// Rewrite a Jira-hosted icon/avatar URL to jiraf's own `/icon?u=<path>` proxy, so the browser never
-/// talks to Jira. URLs on other hosts are returned unchanged.
+/// Origin of the `jiraf` URI scheme as the page sees it: Tauri exposes custom schemes as
+/// `<scheme>://localhost` on macOS/Linux and `http://<scheme>.localhost` on Windows (WebView2).
+#[cfg(windows)]
+pub const ICON_ORIGIN: &str = "http://jiraf.localhost";
+/// Origin of the `jiraf` URI scheme as the page sees it: Tauri exposes custom schemes as
+/// `<scheme>://localhost` on macOS/Linux and `http://<scheme>.localhost` on Windows (WebView2).
+#[cfg(not(windows))]
+pub const ICON_ORIGIN: &str = "jiraf://localhost";
+
+/// Rewrite a Jira-hosted icon/avatar URL to jiraf's own `<ICON_ORIGIN>/icon?u=<path>` scheme, so the
+/// page never talks to Jira. URLs on other hosts are returned unchanged.
 pub fn icon_url(base: &str, url: &str) -> String {
     match url.strip_prefix(base) {
-        Some(path) => format!("/icon?u={}", pct(path)),
+        Some(path) => format!("{ICON_ORIGIN}/icon?u={}", pct(path)),
         None => url.to_string(),
     }
 }
 
-/// Avatar URL for the page: the `/icon` proxy URL when Jira hosts it, `None` otherwise (other hosts
+/// Avatar URL for the page: the icon scheme URL when Jira hosts it, `None` otherwise (other hosts
 /// are blocked by the CSP, and we don't want the browser calling them anyway).
 fn local_avatar(base: &str, url: &str) -> Option<String> {
     url.strip_prefix(base).filter(|p| check_icon_path(p).is_ok()).map(|_| icon_url(base, url))
@@ -188,6 +197,38 @@ async fn get_icon(st: &AppState, u: &str) -> ApiResult<(String, Vec<u8>)> {
     Ok(v)
 }
 
+/// The Jira path in an icon scheme request (`…/icon?u=<path>`, either origin), decoded.
+fn icon_query(uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(uri).ok()?;
+    if url.path() != "/icon" {
+        return None;
+    }
+    url.query_pairs().find(|(k, _)| k == "u").map(|(_, v)| v.into_owned())
+}
+
+/// Answer one `jiraf://` (or `http://jiraf.localhost`) request: the icon with its content type,
+/// cached for a day by the webview. `400` for anything but an allowed icon path, `503` before startup
+/// succeeded, `502` if Jira won't return it.
+pub async fn icon_response(holder: &Holder, uri: &str) -> tauri::http::Response<Vec<u8>> {
+    let reply = |status: u16, ct: &str, body: Vec<u8>| {
+        tauri::http::Response::builder().status(status).header("Content-Type", ct).header("Cache-Control", "max-age=86400").body(body).unwrap()
+    };
+    let Some(u) = icon_query(uri).filter(|u| check_icon_path(u).is_ok()) else {
+        log::warn!("icon request refused: {uri}");
+        return reply(400, "text/plain", b"not an icon path".to_vec());
+    };
+    let Ok(st) = holder.ready() else {
+        return reply(503, "text/plain", b"jiraf is not ready".to_vec());
+    };
+    match get_icon(&st, &u).await {
+        Ok((ct, bytes)) => reply(200, &ct, bytes),
+        Err(e) => {
+            log::warn!("icon {u}: {e}");
+            reply(502, "text/plain", e.to_string().into_bytes())
+        }
+    }
+}
+
 /// Make sure every icon the page will show is in the local folder before the page asks for it.
 async fn prefetch_icons(st: &AppState, paths: Vec<String>) {
     let jobs = paths.iter().filter(|u| check_icon_path(u).is_ok()).map(|u| async move {
@@ -224,7 +265,7 @@ pub async fn data(holder: State<'_, Holder>, refresh: bool) -> ApiResult {
 /// ```json
 /// { "today": "YYYY-MM-DD", "fetchedAt": "HH:MM", "jiraBase": "…",
 ///   "followUp": {…}, "tabs": […], "bubbles": [{ "id", "name", "jql", "icon" }],
-///   "types": { "Epic": "/icon?u=…" }, "priorities": [{ "name", "icon" }],
+///   "types": { "Epic": "jiraf://localhost/icon?u=…" }, "priorities": [{ "name", "icon" }],
 ///   "issues": [Issue…] }
 /// ```
 ///
@@ -465,7 +506,22 @@ mod tests {
     #[test]
     fn icon_urls() {
         let b = "https://jira.x";
-        assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), "/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1");
+        assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), format!("{ICON_ORIGIN}/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1"));
         assert_eq!(icon_url(b, "https://other/x.png"), "https://other/x.png");
+    }
+
+    #[test]
+    fn icon_origin_per_platform() {
+        assert_eq!(ICON_ORIGIN, if cfg!(windows) { "http://jiraf.localhost" } else { "jiraf://localhost" });
+    }
+
+    #[test]
+    fn icon_query_round_trip() {
+        let b = "https://jira.x";
+        for p in ["/secure/viewavatar?size=xsmall&avatarId=1", "/images/icons/a b%20c.png"] {
+            assert_eq!(icon_query(&icon_url(b, &format!("{b}{p}"))).as_deref(), Some(p));
+        }
+        assert_eq!(icon_query("jiraf://localhost/other?u=/images/x"), None);
+        assert_eq!(icon_query("http://jiraf.localhost/icon?u=/images/x").as_deref(), Some("/images/x"));
     }
 }
