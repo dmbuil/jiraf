@@ -211,6 +211,9 @@ fn atomic_write(path: &Path, body: &str, private: bool) -> Result<()> {
     let name = path.file_name().context("no file name")?.to_string_lossy();
     let tmp = path.with_file_name(format!("{name}.tmp"));
     std::fs::write(&tmp, body).with_context(|| format!("writing {}", tmp.display()))?;
+    // On Windows the config folder (%APPDATA%) is already the user's own.
+    #[cfg(not(unix))]
+    let _ = private;
     let perms = match std::fs::metadata(path) {
         Ok(m) => Some(m.permissions()),
         #[cfg(unix)]
