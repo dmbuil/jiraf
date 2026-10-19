@@ -106,8 +106,14 @@ function renderSettings() {
       ${field('follow_up.hierarchy', 'Hierarchy', chips('follow_up.hierarchy', fu.hierarchy, true))}
       ${field('follow_up.priority_order', 'Priority order', chips('follow_up.priority_order', fu.priority_order, true))}
     </section>
-    <section class="card"><h2>Tabs</h2>${msgs('tabs')}${tabs}<div class="cf-pad"><button type="button" class="tog" id="cfAddTab">+ Add tab</button></div></section>
-    <section class="card"><h2>Bubbles</h2>${msgs('bubbles')}${bubbles}<div class="cf-pad"><button type="button" class="tog" id="cfAddBubble">+ Add bubble</button></div></section>
+    <section class="card"><h2>Tabs</h2>
+      <p class="cf-intro">Tabs split the dashboard's tree. An item goes to the first tab listing the top-most Activity Type in its tree
+        (usually its Initiative's), so a whole tree stays together. Pinned issues go to their tab whatever their Activity Type, and
+        anything no tab matches lands in an "Other" tab.</p>${msgs('tabs')}${tabs}<div class="cf-pad"><button type="button" class="tog" id="cfAddTab">+ Add tab</button></div></section>
+    <section class="card"><h2>Bubbles</h2>
+      <p class="cf-intro">Bubbles are the filters in the top bar: one per project, team or theme you follow. Each one is a JQL query;
+        try it in Jira's issue search first, then paste it here. jiraf shows its open issues plus those closed in the last
+        ${esc(fu.done_days)} days. Use Exclude to carve one bubble out of another.</p>${msgs('bubbles')}${bubbles}<div class="cf-pad"><button type="button" class="tog" id="cfAddBubble">+ Add bubble</button></div></section>
     <div class="cf-bar"><span id="cfNote" class="cf-muted"></span><span class="spacer"></span>
       <button type="button" class="tog" id="cfBack" hidden>Back to dashboard</button>
       ${v.firstRun ? '' : '<button type="button" class="tog" id="cfCancel">Cancel</button>'}
