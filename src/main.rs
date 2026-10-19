@@ -66,6 +66,7 @@ fn main() {
             api::set_target,
             api::set_due,
             api::transition,
+            api::open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error while running jiraf");

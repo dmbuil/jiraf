@@ -490,6 +490,29 @@ pub async fn transition(holder: State<'_, Holder>, key: String, id: String) -> A
     after_write(&st, &key).await
 }
 
+/* ---------- links ---------- */
+
+/// Whether the page may open `url` in the browser: only pages of the configured Jira (`base` + `/…`).
+fn jira_link_allowed(base: &str, url: &str) -> bool {
+    url.starts_with(&format!("{base}/"))
+}
+
+/// Open a Jira link (issue, search, comments) in the default browser.
+///
+/// # Errors
+/// For any URL outside the configured Jira, or if the system can't open it.
+#[tauri::command]
+pub fn open_external(app: tauri::AppHandle, holder: State<'_, Holder>, url: String) -> ApiResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let st = holder.ready()?;
+    if !jira_link_allowed(st.jira.base(), &url) {
+        log::warn!("refused to open {url}");
+        return Err(bad("only Jira links can be opened"));
+    }
+    app.opener().open_url(url, None::<&str>)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,6 +531,17 @@ mod tests {
         let b = "https://jira.x";
         assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), format!("{ICON_ORIGIN}/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1"));
         assert_eq!(icon_url(b, "https://other/x.png"), "https://other/x.png");
+    }
+
+    #[test]
+    fn jira_links_only() {
+        let b = "https://jira.x";
+        for u in ["https://jira.x/browse/DV-1", "https://jira.x/issues/?jql=labels%20%3D%20%22a%22"] {
+            assert!(jira_link_allowed(b, u), "{u}");
+        }
+        for u in ["https://jira.x", "https://jira.x.evil/browse/DV-1", "https://jira.x@evil/", "http://jira.x/browse/DV-1", "javascript:alert(1)"] {
+            assert!(!jira_link_allowed(b, u), "{u}");
+        }
     }
 
     #[test]

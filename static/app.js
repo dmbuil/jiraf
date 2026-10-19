@@ -476,6 +476,13 @@ async function load(refresh) {
   document.getElementById('sync').title = `Loaded from Jira at ${D.fetchedAt}. ← → switches bubble.`;
   setTab(state.tab); rerender();
 }
+/* ---------- Jira links open in the default browser, never inside the jiraf window ---------- */
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[target=_blank]'); if (!a) return;
+  e.preventDefault();
+  api('open_external', { url: a.href }).catch(err => toast(esc(err.message), true));
+}, true);
+
 /* ---------- startup: wait for the config/token/Jira checks, then the dashboard or the error screen ---------- */
 const startup = document.getElementById('startup');
 function showStartupError(s) {
