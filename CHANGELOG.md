@@ -4,11 +4,20 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-19
+
+### Added
+
+- `CONTRIBUTING.md` (reporting issues, design rules, build and test, pull requests, releasing) and
+  `SECURITY.md` (supported versions, how to report a vulnerability, what jiraf protects and what it
+  doesn't).
+
 ### Changed
 
 - `jiraf.log` no longer grows forever: once it is over 4 MB, jiraf empties it at the next launch.
 - Settings: **Open config folder** (was **Open jiraf.toml**) shows the folder with `jiraf.toml`
   selected, instead of opening the file in whatever app claims `.toml` files.
+- Shorter footer, with a credit line.
 
 ### Fixed
 
@@ -108,7 +117,8 @@ server and opened in the browser.
 - Assignee avatars and Jira icons cached locally.
 - Light and dark themes.
 
-[Unreleased]: https://github.com/dmbuil/jiraf/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/dmbuil/jiraf/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/dmbuil/jiraf/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/dmbuil/jiraf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dmbuil/jiraf/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dmbuil/jiraf/releases/tag/v0.1.0
