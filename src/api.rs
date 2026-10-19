@@ -146,12 +146,16 @@ const ICON_PREFIXES: &[&str] = &["/secure/viewavatar", "/secure/projectavatar", 
 /// Content types saved to the icon folder, with the file extension used for each.
 const ICON_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("svg", "image/svg+xml"), ("gif", "image/gif"), ("jpg", "image/jpeg"), ("ico", "image/x-icon")];
 
-/// Only let the proxy fetch paths under [`ICON_PREFIXES`], with no `..` and no protocol-relative `//`.
+/// Only let the proxy fetch paths under [`ICON_PREFIXES`], with no protocol-relative `//` and nothing
+/// that could climb out of them: `..`, `\\`, or their percent-encoded forms (`%2e`, `%5c`), which the URL
+/// parser would turn back into `..` and `/`.
 ///
 /// # Errors
 /// An [`ApiError`] for anything else.
 fn check_icon_path(u: &str) -> ApiResult<()> {
-    if u.starts_with("//") || u.contains("..") || !ICON_PREFIXES.iter().any(|p| u.starts_with(p)) {
+    let lower = u.to_ascii_lowercase();
+    let climbs = u.contains("..") || u.contains('\\') || lower.contains("%2e") || lower.contains("%5c");
+    if u.starts_with("//") || climbs || !ICON_PREFIXES.iter().any(|p| u.starts_with(p)) {
         return Err(bad("not an icon path"));
     }
     Ok(())
@@ -533,6 +537,16 @@ mod tests {
         let b = "https://jira.x";
         assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), format!("{ICON_ORIGIN}/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1"));
         assert_eq!(icon_url(b, "https://other/x.png"), "https://other/x.png");
+    }
+
+    #[test]
+    fn icon_paths_cannot_climb_out() {
+        assert!(check_icon_path("/images/icons/priorities/major.svg").is_ok());
+        assert!(check_icon_path("/secure/viewavatar?size=xsmall&avatarId=1").is_ok());
+        // the URL parser treats %2e%2e (any case) as `..` and `\` as `/`
+        for u in ["/images/../rest/api/2/myself", "/images/%2e%2e/%2e%2e/rest/api/2/myself", "/images/%2E%2e/x", "/images/.%2e/x", "/images\\..\\x", "/images/%5c..%5cx"] {
+            assert!(check_icon_path(u).is_err(), "{u}");
+        }
     }
 
     #[test]
