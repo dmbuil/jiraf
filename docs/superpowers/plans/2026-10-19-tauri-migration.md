@@ -14,7 +14,7 @@
 
 - No local TCP port is opened. `actix-web` is removed from `Cargo.toml` by the end of Task 3.
 - No npm / bundler. The frontend stays `static/index.html` + `static/app.js`; use `app.withGlobalTauri = true`.
-- macOS (Apple Silicon) only; no signing, notarization, DMG or updater.
+- macOS (Apple Silicon) only for now; no signing, notarization, DMG or updater. Nothing may block a later Windows build: no macOS-only APIs, no hard-coded `jiraf://` origin (see Task 4), and `icon.ico` in the bundle icons.
 - Bundle identifier `com.dmbuil.jiraf`, product name `jiraf`, `frontendDist` = `static`.
 - Config folder: `$JIRAF_CONFIG_DIR` if set, else Tauri's `app_config_dir()` (`~/Library/Application Support/com.dmbuil.jiraf/`). It holds `jiraf.toml`, `.env`, `icons/`, `jiraf.log`.
 - An existing `jiraf.toml` (including `[server] bind`) must load unchanged.
@@ -29,6 +29,7 @@
 3. **Icon paths containing `?`, `&`, `=` or `%`** must survive the `icon_url` → `jiraf://` → `icon_query` round trip (Task 4, `icon_query_round_trip`).
 4. **Look-alike hosts in links** (`https://jira.x.evil/…`, `https://jira.x@evil/…`) must not open (Task 6, `jira_links_only`).
 5. **First launch must never overwrite** an existing `jiraf.toml` or `.env` (Task 1, `ensure_dir_keeps_existing_files`).
+6. **Windows icon origin**: icon URLs must not hard-code `jiraf://` (Task 4, `icon_origin_per_platform`).
 
 ---
 
@@ -101,8 +102,8 @@ This replaces actix in one go: the page, the commands and the build config chang
 - JS: `api(cmd, args = {})` resolves with the command result and rejects with `Error(message)`.
 
 - [ ] **Step 1: Install the CLI** with `cargo install tauri-cli --version "^2" --locked`. Expected: `cargo tauri --version` prints `tauri-cli 2.x`.
-- [ ] **Step 2: Generate icons** with `cargo tauri icon docs/jiraf.png -o app-icons`. Expected: `app-icons/icon.icns` exists.
-- [ ] **Step 3: Write `tauri.conf.json`** with: `productName "jiraf"`, `identifier "com.dmbuil.jiraf"`, `build.frontendDist "static"` (no `devUrl`), `app.withGlobalTauri true`, one window `{ "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true }`, and `bundle { "active": true, "targets": ["app"], "icon": ["app-icons/32x32.png","app-icons/128x128.png","app-icons/128x128@2x.png","app-icons/icon.icns"] }`. Set `app.security.csp` to exactly:
+- [ ] **Step 2: Generate icons** with `cargo tauri icon docs/jiraf.png -o app-icons`. Expected: `app-icons/icon.icns` and `app-icons/icon.ico` exist.
+- [ ] **Step 3: Write `tauri.conf.json`** with: `productName "jiraf"`, `identifier "com.dmbuil.jiraf"`, `build.frontendDist "static"` (no `devUrl`), `app.withGlobalTauri true`, one window `{ "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true }`, and `bundle { "active": true, "targets": ["app"], "icon": ["app-icons/32x32.png","app-icons/128x128.png","app-icons/128x128@2x.png","app-icons/icon.icns","app-icons/icon.ico"] }`. Set `app.security.csp` to exactly:
   `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: jiraf: http://jiraf.localhost; connect-src ipc: http://ipc.localhost; frame-ancestors 'none'`
   `capabilities/default.json`: `{ "identifier": "default", "windows": ["main"], "permissions": ["core:default"] }`. Do **not** grant `opener:*` to the page.
 - [ ] **Step 4: Convert the handlers** in `api.rs` to the commands above. Bodies keep their validation and Jira calls. Each starts with `let st = holder.ready()?;`. `data` keeps the TTL cache logic, and returns the cached `Value` cloned. Update the module rustdoc's route table into a command table.
@@ -123,11 +124,11 @@ This replaces actix in one go: the page, the commands and the build config chang
 **Interfaces:**
 - Consumes: `Holder::ready` (Task 2), `get_icon`, `check_icon_path` (existing).
 - Produces:
-  - `pub const ICON_ORIGIN: &str = "jiraf://localhost"`. `icon_url(base, url)` returns `format!("{ICON_ORIGIN}/icon?u={}", pct(path))` for Jira-hosted URLs (other hosts unchanged, as today).
+  - `pub const ICON_ORIGIN: &str`: `"http://jiraf.localhost"` under `#[cfg(windows)]`, else `"jiraf://localhost"` (how Tauri exposes custom schemes per platform). `icon_url(base, url)` returns `format!("{ICON_ORIGIN}/icon?u={}", pct(path))` for Jira-hosted URLs (other hosts unchanged, as today).
   - `fn icon_query(uri: &str) -> Option<String>`: parse with `reqwest::Url::parse`, require path `/icon`, and return the decoded `u` query value.
   - `pub async fn icon_response(holder: &app::Holder, uri: &str) -> tauri::http::Response<Vec<u8>>`: 200 with the content type and `Cache-Control: max-age=86400`. 400 if `icon_query` is `None` or `check_icon_path` fails, 503 if not ready, 502 if Jira fails (body = message, logged with `warn!`).
 
-- [ ] **Step 1: Write the failing tests.** Update `icon_urls` to expect `"jiraf://localhost/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1"`. Add `icon_query_round_trip`: for `"/secure/viewavatar?size=xsmall&avatarId=1"` and `"/images/icons/a b%20c.png"`, `icon_query(&icon_url(b, &(b.to_string() + p))) == Some(p)`. Also `icon_query("jiraf://localhost/other?u=/images/x") == None`.
+- [ ] **Step 1: Write the failing tests.** Update `icon_urls` to expect `format!("{ICON_ORIGIN}/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1")`, and add `icon_origin_per_platform`: `ICON_ORIGIN == "http://jiraf.localhost"` under `cfg!(windows)`, else `"jiraf://localhost"`. Add `icon_query_round_trip`: for `"/secure/viewavatar?size=xsmall&avatarId=1"` and `"/images/icons/a b%20c.png"`, `icon_query(&icon_url(b, &(b.to_string() + p))) == Some(p)`. Also `icon_query("jiraf://localhost/other?u=/images/x") == None`, and `icon_query("http://jiraf.localhost/icon?u=/images/x") == Some("/images/x")` (the Windows form parses too).
 - [ ] **Step 2: Run** `cargo test api::` and expect FAIL.
 - [ ] **Step 3: Implement** the interfaces. In `main.rs`: `.register_asynchronous_uri_scheme_protocol("jiraf", |ctx, req, responder| { let app = ctx.app_handle().clone(); let uri = req.uri().to_string(); tauri::async_runtime::spawn(async move { responder.respond(api::icon_response(&app.state::<app::Holder>(), &uri).await) }); })`.
 - [ ] **Step 4: Run** `cargo test` and expect PASS. `JIRAF_CONFIG_DIR=$PWD cargo tauri dev`: issue type, priority and avatar icons show. The CSP reports no violations in the devtools console.

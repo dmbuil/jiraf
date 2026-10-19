@@ -32,7 +32,9 @@ in this design should make that harder, but nothing is built for it yet.
 
 ## Non-goals (for now)
 
-- Windows / Linux builds. macOS (Apple Silicon) only.
+- Windows / Linux builds. macOS (Apple Silicon) only for now, **but nothing may block a later Windows
+  build**: no macOS-only APIs or hard-coded macOS URLs/paths. A GitHub Action building both the macOS
+  and Windows bundles is planned as follow-up work.
 - Code signing, notarization, DMG, auto-update, distribution to others.
 - A settings screen. A settings menu is planned later; keep config loading isolated so it can plug in
   without a rewrite, but don't build any of it.
@@ -66,7 +68,8 @@ in this design should make that harder, but nothing is built for it yet.
 
 Keep the single crate at the repo root rather than moving it into `src-tauri/`; the history stays
 readable and the diff small. Add at the root: `tauri.conf.json`, `build.rs` (`tauri_build::build()`),
-`capabilities/default.json`. App icons for the bundle go in `app-icons/` (set via `bundle.icon`),
+`capabilities/default.json`. App icons for the bundle go in `app-icons/` (set via `bundle.icon`, including `icon.ico` for a later
+Windows build),
 **not** `icons/`, because `/icons` is today's git-ignored Jira icon cache.
 
 Bundle identifier: `com.dmbuil.jiraf` (my call). Product name: `jiraf`. `frontendDist`: `static`.
@@ -153,8 +156,9 @@ codes go away; keep logging each error with `log::warn!` as `error_response` doe
 ### Icons
 
 The `/icon?u=<jira path>` proxy becomes a custom URI scheme registered with
-`register_asynchronous_uri_scheme_protocol("jiraf", …)`. On macOS the page loads it as
-`jiraf://localhost/icon?u=<path>`. `icon_url` / `local_avatar` produce that form. The handler reuses
+`register_asynchronous_uri_scheme_protocol("jiraf", …)`. The origin differs per platform:
+`jiraf://localhost` on macOS/Linux, `http://jiraf.localhost` on Windows (WebView2), chosen at compile
+time. `icon_url` / `local_avatar` produce `<origin>/icon?u=<path>`. The handler reuses
 `check_icon_path`, `ICON_PREFIXES`, the memory → disk → Jira lookup, and returns the cached content
 type plus `Cache-Control: max-age=86400` as today.
 
@@ -181,7 +185,8 @@ the page keeps meaning "refetch from Jira" (`data(refresh: true)`).
 
 ### Window
 
-One window titled `jiraf`, sensible default size (e.g. 1400×900), resizable. Remember size and
+One window titled `jiraf`, sensible default size (e.g. 1400×900), resizable. On Windows the same item lands in the window's
+menu bar and ⌘⇧R reads Ctrl+Shift+R. Remember size and
 position between launches with `tauri-plugin-window-state` (my call). Closing the window quits the app.
 Keep the default macOS app menu (Edit menu needed for copy/paste in inputs) plus Reload config.
 
