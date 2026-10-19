@@ -32,7 +32,7 @@ const mark = (i, f) => (edited[i.k] ??= new Set()).add(f);
 const isEd = (i, f) => edited[i.k]?.has(f) ? 'edited' : '';
 const keyLink = i => `<a class="key" href="${esc(D.jiraBase)}/browse/${esc(i.k)}" target="_blank">${esc(i.k)}</a>`;
 
-// Activity Type values compare whole, ignoring case and accents ("Evolucion tecnologica" = "Evolución Tecnológica").
+// Case- and accent-insensitive form ("Evolucion tecnologica" = "Evolución Tecnológica"): Activity Types and the filter box.
 const norm = v => (v || '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
 function streamOf(i) {
   // root first: the top-most Activity Type wins, so a whole tree (Initiative and below) lives in one tab
@@ -197,7 +197,7 @@ const COLS = () => [
 function matches(i) {
   if (!state.types.has(i.t) && TYPE_ORDER.includes(i.t)) return false;
   if (isDone(i) && !(state.done && recentDone(i))) return false;
-  return !state.q || (i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '') + ' ' + (i.lb || []).join(' ')).toLowerCase().includes(state.q);
+  return !state.q || norm(i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '') + ' ' + (i.lb || []).join(' ')).includes(state.q);
 }
 function buildTree() {
   // shown = matching items + their ancestors (ancestors of a hidden type are skipped; children attach higher up)
@@ -415,7 +415,7 @@ function setTab(t) {
 function rerender() { if (!D) return; renderTeam(); renderHead(); renderScope(); renderAtt(); }
 function select(p) { state.proj = p; state.sort = null; writeHash(); rerender(); window.scrollTo({ top: 0 }); }
 document.getElementById('doneTog').onclick = e => { state.done = !state.done; e.currentTarget.classList.toggle('on'); renderScope(); };
-document.getElementById('q').oninput = e => { state.q = e.target.value.toLowerCase(); renderScope(); };
+document.getElementById('q').oninput = e => { state.q = norm(e.target.value); renderScope(); };
 document.addEventListener('keydown', e => {
   if (!D || /INPUT|TEXTAREA/.test(e.target.tagName) || menu.classList.contains('on')) return;
   const order = [ALL, ...D.bubbles.map(b => b.id)], i = order.indexOf(state.proj);
