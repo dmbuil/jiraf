@@ -28,7 +28,8 @@ that calls Tauri commands. Nothing is stored except config, an icon cache, a log
 ## Commands
 
 ```sh
-cargo test                                  # all Rust tests
+cargo nextest run                           # all Rust tests (cargo-nextest; not `cargo test`)
+cargo nextest run settings::                # a subset, by test-name filter
 cargo clippy --all-targets                  # must stay warning-free
 node --check static/app.js && node --check static/settings.js
 JIRAF_CONFIG_DIR=$PWD cargo tauri dev       # run against the repo's own jiraf.toml / .env
@@ -36,8 +37,10 @@ cargo tauri build --bundles app             # → target/release/bundle/macos/ji
 cargo tauri icon app-icons/jiraf-icon-1024.png -o app-icons   # regenerate icons (then drop android/ios)
 ```
 
-Run tests with `JIRA_TOKEN` unset: a token in the environment wins over `.env`, and some tests skip
-themselves when it is set.
+Use `cargo nextest run`, never `cargo test` (install it with `cargo install cargo-nextest --locked`).
+Each test runs in its own process. There are no doctests (jiraf is a binary crate), so nextest covers
+every test. Run tests with `JIRA_TOKEN` unset: a token in the environment wins over `.env`, and some
+tests skip themselves when it is set.
 
 ## Never
 
@@ -55,7 +58,8 @@ themselves when it is set.
 
 - Rust 2024 edition (let-chains are fine). Rustdoc on every item, an `# Errors` section on fallible
   functions, terse comments that say why. Match the surrounding code.
-- Test-first for Rust logic: write the failing test, watch it fail, then implement. Pure logic goes in
+- Test-first for Rust logic: write the failing test, watch it fail (`cargo nextest run <name>`), then
+  implement. Pure logic goes in
   `#[cfg(test)]` modules next to the code; Jira calls are tested against a local fake (see
   `settings.rs` tests).
 - File writes in the config folder are atomic (`.tmp` + rename) and keep permissions; `.env` is

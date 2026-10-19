@@ -402,8 +402,20 @@ All five are in `.gitignore`.
 
 ## Development
 
+Tests run with [cargo-nextest](https://nexte.st/) (install once with `cargo install cargo-nextest --locked`):
+
 ```sh
-cargo test                                # unit tests (config, mapping, JQL helpers, key checks, links, icons)
+cargo nextest run                         # all tests: config, settings, startup, mapping, JQL helpers, key checks, links, icons
+cargo nextest run settings::              # only the tests whose name contains settings::
+cargo clippy --all-targets                # lints; kept warning-free
+node --check static/app.js && node --check static/settings.js   # page scripts parse
+```
+
+Run the tests without `JIRA_TOKEN` in your environment: a real token there wins over `.env`, so the
+token-file tests skip themselves when it is set. The Settings tests talk to a fake Jira on a local port,
+never to your real one.
+
+```sh
 JIRAF_CONFIG_DIR=$PWD cargo tauri dev     # run with ./jiraf.toml and ./.env; rebuilds on change
 cargo tauri build --bundles app           # release .app
 cargo doc --no-deps --document-private-items --open   # API docs for every module, type and function
