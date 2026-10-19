@@ -218,3 +218,4 @@ setSec.addEventListener('click', e => {
 });
 
 window.__TAURI__.event.listen('open-settings', () => { if (!S) openSettings(); });
+document.getElementById('settingsBtn').onclick = () => { if (!S) openSettings(); };
