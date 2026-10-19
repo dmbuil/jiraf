@@ -13,11 +13,18 @@ pub const CONFIG_FILE: &str = "jiraf.toml";
 /// Name of the secrets file inside the config folder.
 pub const ENV_FILE: &str = ".env";
 
+/// First line of a `jiraf.toml` written by the Settings screen ([`render_toml`]).
+const HEADER: &str = "# Written by jiraf's Settings screen. Edit it there (⌘,) rather than by hand.";
+
+/// Ids the page uses itself: the "All" bubble, and the attention and "Other" tabs.
+const RESERVED_BUBBLE_IDS: &[&str] = &["*"];
+const RESERVED_TAB_IDS: &[&str] = &["att", "other"];
+
 /// The whole `jiraf.toml`, plus the token taken from the environment.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// `[server]`: where jiraf listens and where it keeps icon copies.
-    #[serde(default)]
+    /// `[server]`: where jiraf keeps icon copies.
+    #[serde(default, skip_serializing_if = "Server::is_default")]
     pub server: Server,
     /// `[jira]`: which Jira instance to talk to, and how long to cache its answers.
     pub jira: Jira,
@@ -41,15 +48,23 @@ pub struct Config {
 }
 
 /// `[server]` section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Server {
-    /// Former listen address. Ignored by the app (it opens no port), but still accepted so older files load.
-    #[serde(default)]
+    /// Former listen address. Ignored by the app (it opens no port), but still accepted so older files
+    /// load. Never written back.
+    #[serde(default, skip_serializing)]
     pub bind: Option<String>,
     /// Local copies of Jira icons/avatars. A disposable cache: delete it any time. A relative path is
     /// relative to the config folder.
-    #[serde(default = "default_icon_dir")]
+    #[serde(default = "default_icon_dir", skip_serializing_if = "is_default_icon_dir")]
     pub icon_dir: String,
+}
+
+impl Server {
+    /// Whether nothing in it would be written (see [`render_toml`]).
+    fn is_default(&self) -> bool {
+        is_default_icon_dir(&self.icon_dir)
+    }
 }
 
 impl Default for Server {
@@ -63,9 +78,14 @@ fn default_icon_dir() -> String {
     "icons".into()
 }
 
+/// Whether `dir` is [`default_icon_dir`] (left out of a written file).
+fn is_default_icon_dir(dir: &str) -> bool {
+    dir == default_icon_dir()
+}
+
 
 /// `[jira]` section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Jira {
     /// Base URL, e.g. `https://jira.example.com` (no trailing slash needed).
     pub url: String,
@@ -153,11 +173,11 @@ pub struct Bubble {
     /// every excluded bubble.
     pub jql: String,
     /// Optional Jira project key whose avatar is used as the bubble icon.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_project: Option<String>,
     /// Ids of other bubbles to subtract: the effective JQL becomes `(jql) AND NOT (their jql)`, so
     /// complementary bubbles stay in sync from a single definition.
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
 }
 
@@ -189,7 +209,7 @@ pub struct Tab {
 ///
 /// # Errors
 /// If a bubble excludes an unknown id or itself.
-fn resolve_excludes(bubbles: &[Bubble]) -> Result<Vec<Bubble>> {
+pub(crate) fn resolve_excludes(bubbles: &[Bubble]) -> Result<Vec<Bubble>> {
     let by_id: std::collections::HashMap<&str, &Bubble> = bubbles.iter().map(|b| (b.id.as_str(), b)).collect();
     bubbles
         .iter()
@@ -210,6 +230,69 @@ fn resolve_excludes(bubbles: &[Bubble]) -> Result<Vec<Bubble>> {
             Ok(out)
         })
         .collect()
+}
+
+/// The clean `jiraf.toml` for `cfg`: a one-line header, then every section in struct order, no other
+/// comments. `bind` and a default `icon_dir` are left out.
+///
+/// # Errors
+/// If `cfg` can't be serialized (not expected for a parsed config).
+pub fn render_toml(cfg: &Config) -> Result<String> {
+    Ok(format!("{HEADER}\n\n{}", toml::to_string_pretty(cfg).context("writing jiraf.toml")?))
+}
+
+/// URL-safe id for `name`: lowercase, common Latin accents dropped, anything else not `[a-z0-9]` → `-`.
+/// `"item"` if nothing is left.
+fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.to_lowercase().chars() {
+        let c = match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ñ' => 'n',
+            'ç' => 'c',
+            c => c,
+        };
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    match out.trim_matches('-') {
+        "" => "item".into(),
+        s => s.into(),
+    }
+}
+
+/// `slug(name)`, or `slug(name)-2`, `-3`… if taken; recorded in `used`.
+fn fresh_id(name: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let base = slug(name);
+    let (mut id, mut n) = (base.clone(), 2);
+    while used.contains(&id) {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    used.insert(id.clone());
+    id
+}
+
+/// Give every bubble and tab with an empty id one made from its name, unique in its list and not
+/// reserved by the page. Existing ids never change, so renaming keeps links and excludes working.
+pub fn assign_ids(cfg: &mut Config) {
+    let mut used: std::collections::HashSet<String> =
+        cfg.bubbles.iter().map(|b| b.id.clone()).chain(RESERVED_BUBBLE_IDS.iter().map(|s| s.to_string())).collect();
+    for b in cfg.bubbles.iter_mut().filter(|b| b.id.is_empty()) {
+        b.id = fresh_id(&b.name, &mut used);
+    }
+    let mut used: std::collections::HashSet<String> =
+        cfg.tabs.iter().map(|t| t.id.clone()).chain(RESERVED_TAB_IDS.iter().map(|s| s.to_string())).collect();
+    for t in cfg.tabs.iter_mut().filter(|t| t.id.is_empty()) {
+        t.id = fresh_id(&t.name, &mut used);
+    }
 }
 
 /// The value of `name` in the dotenv file `env_file`, without touching the process environment.
@@ -269,6 +352,38 @@ pub fn ensure_dir(dir: &Path) -> Result<()> {
 }
 
 impl Config {
+    /// First-run defaults for the Settings screen: no URL, no field ids, no bubbles, one catch-all tab.
+    pub fn template() -> Self {
+        Self {
+            server: Server::default(),
+            jira: Jira { url: String::new(), cache_seconds: default_cache() },
+            fields: Fields {
+                extended_status: String::new(),
+                activity_type: String::new(),
+                parent_link: String::new(),
+                epic_link: String::new(),
+                target_start: String::new(),
+                target_end: String::new(),
+            },
+            follow_up: FollowUp::default(),
+            bubbles: Vec::new(),
+            tabs: vec![Tab { id: "main".into(), name: "Main".into(), activity_types: Vec::new(), include_unset: true, issues: Vec::new() }],
+            token: String::new(),
+            icon_dir: PathBuf::new(),
+        }
+    }
+
+    /// Parse the text of a `jiraf.toml` as written (no token, excludes not folded in, no checks); only
+    /// the Jira URL's trailing `/` is trimmed.
+    ///
+    /// # Errors
+    /// If it isn't valid TOML or doesn't match the expected shape.
+    pub fn parse(raw: &str) -> Result<Self> {
+        let mut cfg: Config = toml::from_str(raw)?;
+        cfg.jira.url = cfg.jira.url.trim_end_matches('/').to_string();
+        Ok(cfg)
+    }
+
     /// Read, parse and validate `jiraf.toml` in the config folder `dir`, and take the token from
     /// [`read_token`] (`dir/.env`).
     ///
@@ -287,8 +402,7 @@ impl Config {
             );
         }
         let raw = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let mut cfg: Config = toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-        cfg.jira.url = cfg.jira.url.trim_end_matches('/').to_string();
+        let mut cfg = Config::parse(&raw).with_context(|| format!("parsing {}", path.display()))?;
         cfg.token = read_token(&dir.join(ENV_FILE))?;
         cfg.icon_dir = resolve_icon_dir(dir, &cfg.server.icon_dir);
         if cfg.server.bind.is_some() {
@@ -397,6 +511,43 @@ mod tests {
         put(d.path(), ENV_FILE, "JIRA_TOKEN=t\n");
         let cfg = Config::load(d.path()).unwrap();
         assert_eq!(cfg.icon_dir, d.path().join("icons"));
+    }
+
+    #[test]
+    fn jql_round_trips_exactly() {
+        let mut cfg = Config::template();
+        cfg.jira.url = "https://j.example.com".into();
+        let jql = "a = \"x\" AND b ~ 'y'\nOR c = \"p\\\\q\"\nOR d = ''' ";
+        cfg.bubbles.push(Bubble { id: "b".into(), name: "B".into(), jql: jql.into(), icon_project: None, exclude: vec!["c".into()] });
+        let back = Config::parse(&render_toml(&cfg).unwrap()).unwrap();
+        assert_eq!(back.bubbles[0].jql, jql);
+        assert_eq!(back.bubbles[0].exclude, ["c"]);
+    }
+
+    #[test]
+    fn clean_file_drops_bind_and_default_icon_dir() {
+        let raw = include_str!("../jiraf.example.toml").replacen("[server]", "[server]\nbind = \"127.0.0.1:8080\"", 1);
+        let out = render_toml(&Config::parse(&raw).unwrap()).unwrap();
+        assert!(out.starts_with("# Written by jiraf's Settings screen."));
+        assert!(!out.contains("bind") && !out.contains("icon_dir"), "{out}");
+        let mut cfg = Config::parse(&raw).unwrap();
+        cfg.server.icon_dir = "/tmp/i".into();
+        assert!(render_toml(&cfg).unwrap().contains("icon_dir = \"/tmp/i\""));
+    }
+
+    #[test]
+    fn ids_are_unique_safe_and_stable() {
+        let mut cfg = Config::template();
+        let b = |id: &str, name: &str| Bubble { id: id.into(), name: name.into(), jql: "x".into(), icon_project: None, exclude: vec![] };
+        cfg.bubbles = vec![b("keep", "Renamed"), b("", "Evolución Técnica"), b("", "evolucion tecnica"), b("", "*"), b("", "Keep")];
+        let t = |name: &str| Tab { id: "".into(), name: name.into(), activity_types: vec![], include_unset: false, issues: vec![] };
+        cfg.tabs.push(t("Other"));
+        cfg.tabs.push(t("ATT"));
+        assign_ids(&mut cfg);
+        let ids: Vec<_> = cfg.bubbles.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, ["keep", "evolucion-tecnica", "evolucion-tecnica-2", "item", "keep-2"]);
+        let tabs: Vec<_> = cfg.tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(tabs, ["main", "other-2", "att-2"]);
     }
 
     #[test]
