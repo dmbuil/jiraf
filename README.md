@@ -402,8 +402,10 @@ src/jira.rs      Jira client, searches, issue mapping, changelog → Extended St
 src/api.rs       commands, cache, icon store, edits, link check
 src/logging.rs   log file
 static/          index.html (layout + styles) and app.js (rendering + interactions)
-tauri.conf.json  window, CSP, bundle; capabilities/ (page permissions); app-icons/
-docs/            the mascot, design and plan
+tauri.conf.json  window, CSP, bundle; capabilities/ (page permissions)
+app-icons/       app icons: `cargo tauri icon app-icons/jiraf-icon-1024.png -o app-icons`
+                 (that file is docs/jiraf-icon.png fitted to Apple's 824/1024 icon grid)
+docs/            the mascot, the app icon artwork, design and plan
 ```
 
 ## Troubleshooting
