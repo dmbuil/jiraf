@@ -118,13 +118,15 @@ const cmBtn = i => i.ctx ? '' : i.nc
 
 /* ---------- bubbles + header ---------- */
 function renderTeam() {
-  const chip = (k, label, its, av) => {
+  const chip = (k, label, its, av, err) => {
+    // a bubble whose JQL Jira rejected: no counts, Jira's message on hover
+    if (err) return `<button class="member broken ${k === state.proj ? 'on' : ''}" data-p="${esc(k)}" title="JQL rejected by Jira: ${esc(err)}">${av}<span class="nm">${esc(label)}</span><span class="badge b-red">⚠</span></button>`;
     const o = its.filter(x => !isDone(x)).length, b = its.filter(blocked).length, s = its.filter(stale).length;
     return `<button class="member ${k === state.proj ? 'on' : ''}" data-p="${esc(k)}">${av}<span class="nm">${esc(label)}</span>
       <span class="badge b-grey" title="open">${o}</span>${b ? `<span class="badge b-red" title="blocked">${b}</span>` : ''}${s ? `<span class="badge b-amber" title="Extended Status not updated in ${FU.stale_days}+ days">${s}</span>` : ''}</button>`;
   };
   document.getElementById('team').innerHTML = chip(ALL, 'All', items, '<span class="pav all">∗</span>')
-    + D.bubbles.map(b => chip(b.id, b.name, items.filter(i => i.bubbles.includes(b.id)), bubIcon(b))).join('');
+    + D.bubbles.map(b => chip(b.id, b.name, items.filter(i => i.bubbles.includes(b.id)), bubIcon(b), b.error)).join('');
   document.querySelectorAll('.member').forEach(b => b.onclick = () => select(b.dataset.p));
   updateScrl();   // first: showing the arrows narrows the strip
   // centre the selected bubble, so it never sits under an edge fade
@@ -247,7 +249,8 @@ function renderScope() {
       if (open) html += rs.sort(cmp).map(r => row(r, 0)).join('');
     }
   } else html = roots.sort(cmp).map(r => row(r, 0)).join('');
-  document.getElementById('tbody').innerHTML = html || `<tr><td colspan="${cols.length}" class="empty">No items match.</td></tr>`;
+  const err = BUB[state.proj]?.error;
+  document.getElementById('tbody').innerHTML = html || `<tr><td colspan="${cols.length}" class="empty">${err ? `This bubble's JQL was rejected by Jira: ${esc(err)}. Fix it in Settings (⌘,).` : 'No items match.'}</td></tr>`;
 }
 document.getElementById('tbody').addEventListener('click', e => {
   const b = e.target.closest('[data-tg]'); if (!b || b.disabled) return;

@@ -270,7 +270,7 @@ pub async fn data(holder: State<'_, Holder>, refresh: bool) -> ApiResult {
 ///
 /// ```json
 /// { "today": "YYYY-MM-DD", "fetchedAt": "HH:MM", "jiraBase": "…",
-///   "followUp": {…}, "tabs": […], "bubbles": [{ "id", "name", "jql", "icon" }],
+///   "followUp": {…}, "tabs": […], "bubbles": [{ "id", "name", "jql", "icon", "error" }],
 ///   "types": { "Epic": "jiraf://localhost/icon?u=…" }, "priorities": [{ "name", "icon" }],
 ///   "issues": [Issue…] }
 /// ```
@@ -279,15 +279,17 @@ pub async fn data(holder: State<'_, Holder>, refresh: bool) -> ApiResult {
 /// referenced is fetched into the icon folder before returning.
 ///
 /// # Errors
-/// If any bubble search, or the issue type / priority lists, can't be read.
+/// If the issue type / priority lists can't be read, or a bubble search fails other than by bad JQL
+/// (a bubble with bad JQL just carries its `error`).
 async fn build_data(st: &AppState) -> anyhow::Result<Value> {
     let (cfg, j) = (&st.cfg, &st.jira);
     let base = j.base();
-    let (mut issues, types, prios) = tokio::try_join!(
+    let (loaded, types, prios) = tokio::try_join!(
         jira::load_issues(j, cfg, &st.ext_field_name),
         j.get("/rest/api/2/issuetype"),
         j.get("/rest/api/2/priority"),
     )?;
+    let mut issues = loaded.issues;
 
     // Only the issue types that actually show up (Jira may define hundreds).
     let used: std::collections::HashSet<&str> = issues.iter().map(|i| i.t.as_str()).chain(cfg.follow_up.hierarchy.iter().map(String::as_str)).collect();
@@ -334,7 +336,7 @@ async fn build_data(st: &AppState) -> anyhow::Result<Value> {
             },
             None => None,
         };
-        bubbles.push(json!({ "id": b.id, "name": b.name, "jql": b.jql, "icon": avatar }));
+        bubbles.push(json!({ "id": b.id, "name": b.name, "jql": b.jql, "icon": avatar, "error": loaded.broken.get(&b.id) }));
     }
 
     prefetch_icons(st, icon_paths).await;
