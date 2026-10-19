@@ -1,22 +1,34 @@
 # Tests on macOS and Windows for every push and pull request; app bundles for pushes to main
 # and version tags. A tag push (v*) attaches the bundles to that tag's GitHub release; to
 # (re)build an existing release, run the workflow by hand with its tag.
+#
+#   test   ─► bundle (not for pull requests) ─► attach to the release (tags / manual runs with a tag)
 name: build
 
 on:
+  # main: test, then build bundles kept as workflow artifacts.
+  # v* tags: the same, and the bundles go onto that tag's release (which must exist by then:
+  # create it with `gh release create` right after pushing the tag).
   push:
     branches: [main]
     tags: ["v*"]
+  # Pull requests: tests only (the bundle job is skipped).
   pull_request:
+  # Manual runs (Actions tab or `gh workflow run build.yml -f tag=v0.2.0`). The workflow file
+  # comes from the branch you run it on, the code from `tag`, so older tags (made before this
+  # file existed) can be built too.
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag to build and attach bundles to (e.g. v0.2.0); empty = just build"
         required: false
 
+# Read-only by default; only the bundle job may write (to upload release files).
 permissions:
   contents: read
 
+# A newer push to the same branch or tag cancels the run still in progress. Manual runs for
+# different tags each get their own group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag }}
   cancel-in-progress: true
@@ -25,28 +37,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The same checks as AGENTS.md asks for locally, on both platforms jiraf supports.
   test:
     strategy:
-      fail-fast: false
+      fail-fast: false # a Windows failure shouldn't hide the macOS result, or the reverse
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # `inputs.tag` is only set on manual runs; otherwise test the commit that was pushed.
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # Caches ~/.cargo and target/ between runs, keyed on Cargo.lock.
       - uses: Swatinem/rust-cache@v2
+      # Prebuilt cargo-nextest binary (seconds, instead of compiling it).
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
+      # No JIRA_TOKEN in CI, so the token-file tests run too; Settings tests use a local fake Jira.
       - run: cargo nextest run
+      # Warnings fail the build; cfg(windows) / cfg(unix) code only gets linted on its own runner.
       - run: cargo clippy --all-targets -- -D warnings
+      # node is preinstalled on both runners; bash so `&&` works on Windows too.
       - run: node --check static/app.js && node --check static/settings.js
         shell: bash
 
+  # Build the installable bundles, once the tests pass on both platforms.
   bundle:
     needs: test
     if: github.event_name != 'pull_request'
@@ -57,14 +77,17 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            # One app for Apple silicon and Intel Macs.
+            # One app for Apple silicon and Intel Macs: Tauri builds both and merges them (lipo).
             target: universal-apple-darwin
             rustup: aarch64-apple-darwin,x86_64-apple-darwin
             bundles: app,dmg
+            # What goes onto the release (paths relative to target/<target>/release).
             files: bundle/dmg/*.dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             rustup: x86_64-pc-windows-msvc
+            # NSIS: a per-user setup .exe; MSI: for managed installs. Both use the WebView2
+            # bootstrapper, which downloads WebView2 if Windows doesn't have it yet.
             bundles: nsis,msi
             files: bundle/nsis/*.exe bundle/msi/*.msi
     runs-on: ${{ matrix.os }}
@@ -75,18 +98,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rustup }}
+      # A separate cache per target, so the universal and Windows builds don't overwrite each other.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      # Compiled once, then restored from the cache above (cargo install skips it if present).
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
+      # --bundles overrides tauri.conf.json's local default (`app` only). The builds are unsigned.
       - name: Build the bundles
         run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      # Every run keeps its bundles for download from the run's page (90 days by default).
       - uses: actions/upload-artifact@v4
         with:
           name: jiraf-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/bundle/*/*.*
           if-no-files-found: error
+      # Tag pushes and manual runs with a tag: add the files to that release. --clobber replaces
+      # files of the same name, so re-running a release build overwrites its files.
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         shell: bash
