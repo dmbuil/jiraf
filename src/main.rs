@@ -54,9 +54,10 @@ fn main() {
             app.set_menu(menu(app)?)?;
             app.manage(app::Holder::new(dir.clone()));
             let handle = app.handle().clone();
+            let generation = app.state::<app::Holder>().restart();
             tauri::async_runtime::spawn(async move {
                 let r = app::init(&dir).await;
-                handle.state::<app::Holder>().set(r);
+                handle.state::<app::Holder>().set(generation, r);
             });
             Ok(())
         })

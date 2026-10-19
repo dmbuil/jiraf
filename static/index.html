@@ -6,6 +6,7 @@
 <title>jiraf</title>
 <style>
 :root{
+  --top-h:60px; /* top bar: 44px of content + 8px above and below, room to grab the window */
   --bg:#f6f7f9; --panel:#fff; --ink:#172b4d; --muted:#5e6c84; --line:#e3e6ea; --hover:#f4f6f9;
   --accent:#2f3fd0; --accent-soft:#e8eaff;
   --red:#c9372c; --red-soft:#ffeceb; --amber:#a55d00; --amber-soft:#fff4e0; --green:#1f845a; --green-soft:#dcfff1;
@@ -35,7 +36,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 img.ti,img.pi{width:16px;height:16px;flex:none;vertical-align:-3px}
 
 /* top bar */
-.top{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6;height:44px}
+.top{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6;height:var(--top-h)}
 /* macOS: the top bar is the title bar (overlay); leave room for the window buttons */
 .mac .top{padding-left:84px}
 .logo{font-weight:800;letter-spacing:-.5px;font-size:18px}
@@ -104,7 +105,7 @@ main{max-width:1680px;margin:0 auto;padding:8px 16px}
 
 /* tree table */
 table{width:100%;border-collapse:collapse;table-layout:fixed}
-th{position:sticky;top:44px;background:var(--panel);z-index:2;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line);user-select:none;white-space:nowrap}
+th{position:sticky;top:var(--top-h);background:var(--panel);z-index:2;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line);user-select:none;white-space:nowrap}
 th[data-s]{cursor:pointer} th[data-s]:hover{color:var(--ink)}
 td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 tr.r:hover td{background:var(--hover)}

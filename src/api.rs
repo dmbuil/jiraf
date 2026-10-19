@@ -207,11 +207,13 @@ fn icon_query(uri: &str) -> Option<String> {
 }
 
 /// Answer one `jiraf://` (or `http://jiraf.localhost`) request: the icon with its content type,
-/// cached for a day by the webview. `400` for anything but an allowed icon path, `503` before startup
+/// cached for a day by the webview (errors are never cached). `400` for anything but an allowed icon path, `503` before startup
 /// succeeded, `502` if Jira won't return it.
 pub async fn icon_response(holder: &Holder, uri: &str) -> tauri::http::Response<Vec<u8>> {
     let reply = |status: u16, ct: &str, body: Vec<u8>| {
-        tauri::http::Response::builder().status(status).header("Content-Type", ct).header("Cache-Control", "max-age=86400").body(body).unwrap()
+        // only successes are cached: a transient failure must not stick for a day
+        let cache = if status == 200 { "max-age=86400" } else { "no-store" };
+        tauri::http::Response::builder().status(status).header("Content-Type", ct).header("Cache-Control", cache).body(body).unwrap()
     };
     let Some(u) = icon_query(uri).filter(|u| check_icon_path(u).is_ok()) else {
         log::warn!("icon request refused: {uri}");
@@ -541,6 +543,16 @@ mod tests {
         }
         for u in ["https://jira.x", "https://jira.x.evil/browse/DV-1", "https://jira.x@evil/", "http://jira.x/browse/DV-1", "javascript:alert(1)"] {
             assert!(!jira_link_allowed(b, u), "{u}");
+        }
+    }
+
+    #[tokio::test]
+    async fn icon_errors_are_not_cached() {
+        let h = Holder::new("/x".into());
+        for uri in ["jiraf://localhost/icon?u=/rest/api/2/myself", "jiraf://localhost/icon?u=/images/x.png"] {
+            let r = icon_response(&h, uri).await;
+            assert!(r.status().as_u16() >= 400, "{uri}");
+            assert_eq!(r.headers()["Cache-Control"], "no-store", "{uri}");
         }
     }
 

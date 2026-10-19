@@ -10,10 +10,11 @@
     "windows": [
       {
         "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true,
-        "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": { "x": 16, "y": 16 }
+        "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": { "x": 16, "y": 22 }
       }
     ],
     "security": {
+      "dangerousDisableAssetCspModification": ["style-src"],
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: jiraf: http://jiraf.localhost; connect-src ipc: http://ipc.localhost; frame-ancestors 'none'"
     }
   },
