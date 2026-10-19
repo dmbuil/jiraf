@@ -3,6 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/dmbuil/jiraf?include_prereleases&sort=semver)](https://github.com/dmbuil/jiraf/releases)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdmbuil%2Fjiraf%2FHEAD%2FCargo.toml&query=%24.package.version&label=version)](Cargo.toml)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-blue)](https://www.rust-lang.org/)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 [![Last commit](https://img.shields.io/github/last-commit/dmbuil/jiraf)](https://github.com/dmbuil/jiraf/commits)
 ![Jira](https://img.shields.io/badge/Jira-Data%20Center-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
@@ -30,6 +31,9 @@ on the spot:
 **Stateless by design.** Every view is built from live Jira queries, and every edit goes straight back to
 Jira. jiraf has no database. It only keeps a short in-memory cache and local copies of Jira's icons.
 
+jiraf is a desktop app (built with [Tauri](https://tauri.app)): click it in the Dock and the dashboard
+opens in its own window. No terminal, no browser tab, no local server.
+
 ---
 
 ## Contents
@@ -54,7 +58,9 @@ Jira. jiraf has no database. It only keeps a short in-memory cache and local cop
 
 | What                                                   | Why                                                                                                    |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| **macOS** (Apple Silicon)                              | the only platform built today (Windows is planned)                                                     |
 | **Rust 1.88+** (`rustup update`)                       | to build jiraf                                                                                         |
+| **Tauri CLI 2** (`cargo install tauri-cli --version "^2" --locked`) | to build the `.app`                                                                       |
 | **Jira Data Center / Server** with REST API v2         | data source (tested on Jira DC 10.3)                                                                   |
 | A Jira **Personal Access Token**                       | jiraf acts as you: it sees what you see and edits as you                                               |
 | **Advanced Roadmaps** (Plans)                          | *Parent Link*, *Target start* and *Target end* fields                                                  |
@@ -65,27 +71,41 @@ Jira. jiraf has no database. It only keeps a short in-memory cache and local cop
 
 ```sh
 git clone <this repo> jiraf && cd jiraf
-
-cp .env.example .env              # paste your token after JIRA_TOKEN=
-cp jiraf.example.toml jiraf.toml  # set your Jira URL, field ids, tabs and bubbles
-
-cargo run --release               # reads ./jiraf.toml
-# or: cargo run --release -- path/to/other.toml
-
-open http://127.0.0.1:8080/
+cargo tauri build --bundles app   # → target/release/bundle/macos/jiraf.app
 ```
+
+Drag `jiraf.app` into **Applications** and open it. The first launch opens the **Settings** screen:
+fill in your Jira URL, token, field ids and at least one bubble, then **Save**. jiraf checks them with
+Jira and loads the dashboard. Later, **Settings…** (⌘,) in the app menu brings it back.
+
+Everything lives in the config folder:
+
+```
+~/Library/Application Support/com.dmbuil.jiraf/
+├── jiraf.toml           written by Settings: your Jira URL, field ids, tabs and bubbles
+├── jiraf.toml.bak       the previous jiraf.toml, kept on every save (an unreadable one goes to jiraf.toml.broken)
+├── .env                 JIRA_TOKEN=… (Settings only ever changes that line)
+├── jiraf.example.toml   a commented example, if you prefer editing by hand
+├── .env.example
+├── icons/               local copies of Jira icons (created on first load)
+└── jiraf.log            the app's log
+```
+
+Already have a `jiraf.toml` and `.env` from the server version? Move them into that folder.
+**Open config folder** on the error screen opens it in Finder.
 
 To create a token, go to **Jira › your avatar › Profile › Personal Access Tokens › Create token**.
 
 On startup jiraf checks the token (`GET /rest/api/2/myself`) and that the configured Extended Status
-field exists, then logs:
+field exists. If anything fails, the window shows the error, the config folder, **Retry**, **Open
+Settings** and **Open config folder**. When the token is the problem (missing, empty, expired), the
+error screen also has a box to paste a new one. When all is well, `jiraf.log` says:
 
 ```
-INFO jiraf] connected to https://jira.example.com as JANE DOE
-INFO jiraf] jiraf on http://127.0.0.1:8080/
+INFO jiraf::app] connected to https://jira.example.com as JANE DOE
 ```
 
-Set `RUST_LOG=debug` for more detail, or `RUST_LOG=warn` for less.
+Set `RUST_LOG=debug` in `.env` for more detail, or `RUST_LOG=warn` for less.
 
 ## Using the dashboard
 
@@ -105,9 +125,10 @@ Set `RUST_LOG=debug` for more detail, or `RUST_LOG=warn` for less.
   buttons appear next to the status dot to scroll the strip (the mouse wheel scrolls it too), and the
   strip fades out on each side that has more bubbles.
 - **●** shows when the data was last loaded. It's amber while loading and red on error.
-- **◐ / ☀ / ☾** cycles the theme: Auto (follows your OS), Light, Dark. The choice is remembered in this
-  browser only.
+- **◐ / ☀ / ☾** cycles the theme: Auto (follows your OS), Light, Dark. The choice is remembered.
 - **↻** reloads from Jira, bypassing the cache.
+- **Reload config** (⌘⇧R, in the jiraf menu) re-reads `jiraf.toml` and `.env` after you edit them.
+- Jira links (issue keys, labels, **JQL ↗**, comments) open in your default browser.
 
 ### Header row
 
@@ -185,14 +206,22 @@ Rows here are editable too.
 
 ## Configuration
 
-jiraf reads two files at startup. Both are git-ignored:
+Use **Settings** (⌘,): every value below is a form field there, with an ⓘ tooltip on how to fill it
+in. On **Save**, jiraf refuses what would stop it from working (an empty URL, a token Jira rejects, a
+field id Jira doesn't know…) and marks the field. A bubble whose JQL Jira rejects is saved anyway with a
+warning, and shows as broken (⚠) on the dashboard while the other bubbles keep working. If Jira can't
+be reached, the save goes through unchecked. Settings writes a clean `jiraf.toml` (no comments) and
+keeps the previous one as `jiraf.toml.bak`.
+
+You can still edit the files by hand. jiraf reads two files from its config folder
+(`~/Library/Application Support/com.dmbuil.jiraf/`):
 
 | File         | Contents                                                                |
 | ------------ | ----------------------------------------------------------------------- |
-| `.env`       | `JIRA_TOKEN=…`, the only secret (a real environment variable works too) |
+| `.env`       | `JIRA_TOKEN=…`, the only secret (a real environment variable wins), and optionally `RUST_LOG=…` |
 | `jiraf.toml` | everything else. Start from [`jiraf.example.toml`](jiraf.example.toml)  |
 
-Config changes take effect on restart.
+Config changes take effect with **Reload config** (⌘⇧R) or on restart.
 
 ### Bubbles
 
@@ -279,8 +308,8 @@ curl -s -H "Authorization: Bearer $JIRA_TOKEN" https://jira.example.com/rest/api
 
 | Section       | Key                                                       | Default                                   | Description                                                 |
 | ------------- | --------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| `[server]`    | `bind`                                                    | `"127.0.0.1:8080"`                        | listen address; keep it on localhost                        |
-|               | `icon_dir`                                                | `"icons"`                                 | local copies of Jira icons; safe to delete                  |
+| `[server]`    | `icon_dir`                                                | `"icons"`                                 | local copies of Jira icons, relative to the config folder; safe to delete |
+|               | `bind`                                                    | —                                         | no longer used (the app opens no port); accepted and ignored |
 | `[jira]`      | `url`                                                     | *required*                                | base URL, e.g. `https://jira.example.com`                   |
 |               | `cache_seconds`                                           | `60`                                      | how long the dashboard data is kept in memory               |
 | `[fields]`    | *see [Field ids](#field-ids)*                             | instance-specific                         | custom field ids                                            |
@@ -320,90 +349,110 @@ See the `beta-core` bubble in [`jiraf.example.toml`](jiraf.example.toml) for the
 ## How it works
 
 ```
- browser ──HTTP──▶ jiraf (127.0.0.1) ──REST v2 + Bearer token──▶ Jira Data Center
-   ▲  static/index.html, app.js        │  per-bubble searches (parallel, paginated, with changelog)
-   └──────── JSON ◀───────────────────┘  + missing parents, issue types, priorities, avatars
+ window (static/index.html, app.js) ──Tauri IPC──▶ jiraf (Rust) ──REST v2 + Bearer token──▶ Jira Data Center
+   ▲                                                 │  per-bubble searches (parallel, paginated, with changelog)
+   └──────────── JSON ◀──────────────────────────────┘  + missing parents, issue types, priorities, avatars
 ```
 
-- **One load = one payload.** `GET /api/data` runs every bubble's search in parallel, merges the results
-  (tagging each issue with its bubbles), adds missing ancestors, and returns a compact JSON. The tree,
-  tabs, counters and lists are all computed in the browser from that payload.
+- **One load = one payload.** The `data` command runs every bubble's search in parallel, merges the
+  results (tagging each issue with its bubbles), adds missing ancestors, and returns a compact JSON. The
+  tree, tabs, counters and lists are all computed in the page from that payload.
 - **Cache**: the payload is kept in memory for `cache_seconds`. **↻** and any edit invalidate it.
-- **Edits** go through jiraf (`POST /api/issue/{key}/…`). After writing, jiraf reads the issue back and
-  returns it, so the page always shows what Jira actually stored.
-- **Icons** (issue types, priorities, project avatars) are proxied by jiraf (`/icon`), fetched with your
-  token, and saved in `icon_dir`. The browser never contacts Jira directly.
+- **Edits** go through jiraf's commands. After writing, jiraf reads the issue back and returns it, so
+  the page always shows what Jira actually stored.
+- **Icons** (issue types, priorities, avatars) are served by jiraf on its own `jiraf://` scheme, fetched
+  with your token, and saved in `icon_dir`. The page never contacts Jira directly.
 
-### Endpoints
+### Commands
 
-| Method | Path                             | Purpose                                            |
-| ------ | -------------------------------- | -------------------------------------------------- |
-| GET    | `/` , `/app.js`                  | the page                                           |
-| GET    | `/api/data[?refresh=1]`          | the dashboard payload                              |
-| GET    | `/icon?u=<jira path>`            | Jira icon/avatar (allow-listed paths only)         |
-| GET    | `/api/issue/{key}/transitions`   | transitions available for the status menu          |
-| GET    | `/api/issue/{key}/priorities`    | priorities the issue allows, for the priority menu |
-| GET    | `/api/issue/{key}/assignable?q=` | assignable users for the assignee menu             |
-| POST   | `/api/issue/{key}/transition`    | `{ "id": "31" }`                                   |
-| POST   | `/api/issue/{key}/priority`      | `{ "name": "Major" }`                              |
-| POST   | `/api/issue/{key}/assignee`      | `{ "name": "jdoe" }` or `{ "name": null }`         |
-| POST   | `/api/issue/{key}/target`        | `{ "date": "2026-12-31" }` or `{ "date": null }`   |
-| POST   | `/api/issue/{key}/due`           | same as `/target`, for Jira's Due date             |
-| POST   | `/api/issue/{key}/ext`           | `{ "value": "text" }`                              |
+| Command                                 | Purpose                                            |
+| --------------------------------------- | -------------------------------------------------- |
+| `app_status`, `retry`, `open_config_dir` | startup state, Retry / Reload config, Finder      |
+| `open_config_file`                      | open `jiraf.toml` in your editor (from Settings)   |
+| `data { refresh }`                      | the dashboard payload                              |
+| `transitions { key }`                   | transitions available for the status menu          |
+| `priorities { key }`                    | priorities the issue allows, for the priority menu |
+| `assignable { key, q }`                 | assignable users for the assignee menu             |
+| `transition { key, id }`                | move through a workflow transition                 |
+| `set_priority { key, name }`            | set the priority                                   |
+| `set_assignee { key, name }`            | assign (`name`) or unassign (`null`)               |
+| `set_target { key, date }`              | set or clear Target end (`YYYY-MM-DD` or `null`)   |
+| `set_due { key, date }`                 | same, for Jira's Due date                          |
+| `set_ext { key, value }`                | set the Extended Status                            |
+| `open_external { url }`                 | open a Jira link in the default browser            |
+| `settings`                              | what the Settings screen shows (never the token)   |
+| `save_settings { config, token }`       | validate, check with Jira, write the files, reload |
+| `save_token { token }`                  | the error screen's token box                       |
 
 ## Security
 
-jiraf holds a token that can edit Jira as you, so it's built to be used only from your own browser:
+jiraf holds a token that can edit Jira as you:
 
-- **Localhost only**: it binds to `127.0.0.1`.
-- **Host check**: requests whose `Host` header isn't `127.0.0.1`, `localhost` or `[::1]` on the configured
-  port are refused. This blocks DNS-rebinding attacks.
-- **Writes need an `X-Jiraf: 1` header**, and a cross-origin `Origin` is refused. Other websites can't
-  send that header without a CORS preflight, which jiraf never grants.
-- **Input checks**: issue keys are validated before they're used in Jira URLs, and the icon proxy only
+- **No port is opened.** The page talks to jiraf over Tauri's in-process IPC, so no other program or
+  website can reach it.
+- **The token stays in the Rust process.** It's read from `.env` and never sent to the page.
+- **Input checks**: issue keys are validated before they're used in Jira URLs, and the icon scheme only
   serves Jira avatar/icon paths.
-- **Content-Security-Policy**: only jiraf's own script runs. Jira text is always inserted as text, never
-  as HTML.
-- **The token stays on the server side.** It's read from `.env` and never sent to the browser.
+- **Only Jira links open**: `open_external` refuses any URL outside the configured Jira.
+- **Content-Security-Policy**: only jiraf's own script runs, and the page can't load anything remote.
+  Jira text is always inserted as text, never as HTML.
 
-**Never commit** `.env`, `jiraf.toml` (real URLs, project keys and JQL), `icons/` or `mockup/`. All four are in
-`.gitignore`.
+**Never commit** `.env`, `jiraf.toml` (real URLs, project keys and JQL), `icons/`, `jiraf.log` or `mockup/`.
+All five are in `.gitignore`.
 
 ## Development
 
+Tests run with [cargo-nextest](https://nexte.st/) (install once with `cargo install cargo-nextest --locked`):
+
 ```sh
-cargo test               # unit tests (config, mapping, JQL helpers, key checks)
-cargo run                # debug build
-RUST_LOG=debug cargo run
+cargo nextest run                         # all tests: config, settings, startup, mapping, JQL helpers, key checks, links, icons
+cargo nextest run settings::              # only the tests whose name contains settings::
+cargo clippy --all-targets                # lints; kept warning-free
+node --check static/app.js && node --check static/settings.js   # page scripts parse
+```
+
+Run the tests without `JIRA_TOKEN` in your environment: a real token there wins over `.env`, so the
+token-file tests skip themselves when it is set. The Settings tests talk to a fake Jira on a local port,
+never to your real one.
+
+```sh
+JIRAF_CONFIG_DIR=$PWD cargo tauri dev     # run with ./jiraf.toml and ./.env; rebuilds on change
+cargo tauri build --bundles app           # release .app
 cargo doc --no-deps --document-private-items --open   # API docs for every module, type and function
 ```
 
-```
-src/main.rs      startup, token check, localhost guard, routes
-src/config.rs    jiraf.toml model, defaults, validation, bubble excludes
-src/jira.rs      Jira client, searches, issue mapping, changelog → Extended Status age
-src/api.rs       HTTP handlers, cache, icon store, edits
-static/          index.html (layout + styles) and app.js (rendering + interactions)
-docs/            the mascot
-```
+`JIRAF_CONFIG_DIR` points the app at any config folder; without it, the app uses its own
+(`~/Library/Application Support/com.dmbuil.jiraf/`). The log goes to `jiraf.log` in that folder.
 
-`static/` is compiled into the binary (`include_str!`), so rebuild after changing it. The page and script
-are served with `Cache-Control: no-cache`, so a reload always picks up the new build.
+```
+src/main.rs      Tauri setup: config folder, menu, icon scheme, command list
+src/app.rs       startup checks (init), startup state, Retry
+src/config.rs    jiraf.toml / .env loading, defaults, validation, bubble excludes
+src/jira.rs      Jira client, searches, issue mapping, changelog → Extended Status age
+src/api.rs       commands, cache, icon store, edits, link check
+src/logging.rs   log file
+static/          index.html (layout + styles) and app.js (rendering + interactions)
+tauri.conf.json  window, CSP, bundle; capabilities/ (page permissions)
+app-icons/       app icons: `cargo tauri icon app-icons/jiraf-icon-1024.png -o app-icons`
+                 (that file is docs/jiraf-icon.png fitted to Apple's 824/1024 icon grid)
+docs/            the mascot, the app icon artwork, design and plan
+```
 
 ## Troubleshooting
 
 | Symptom                                               | Fix                                                                                                  |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `JIRA_TOKEN is not set (put it in .env)`              | create `.env` from `.env.example`                                                                    |
-| `reading jiraf.toml (start from jiraf.example.toml…)` | `cp jiraf.example.toml jiraf.toml`                                                                   |
+| `JIRA_TOKEN is not set (put it in …/.env)`            | create `.env` from `.env.example` in the config folder, then Retry                                   |
+| `…/jiraf.toml not found: copy jiraf.example.toml…`    | copy `jiraf.example.toml` to `jiraf.toml` in the config folder and fill it in, then Retry            |
 | `checking JIRA_TOKEN against Jira` + 401              | token expired or revoked: create a new one                                                           |
 | `field customfield_… (extended_status) not found`     | wrong id in `[fields]`; see [Field ids](#field-ids)                                                  |
 | ``bubble `x`: Jira answered 400 …``                   | that bubble's JQL is invalid; test it in Jira's issue search first                                   |
 | `issueFunction` errors                                | the JQL uses ScriptRunner functions, which this Jira doesn't have                                    |
 | An **Other** tab appears                              | some Activity Type matches no tab: add it to a tab's `activity_types` or pin the issue with `issues` |
 | Rows look dimmed                                      | they're parents outside your filters, shown for context (read-only)                                  |
-| `Address already in use`                              | jiraf is already running, or change `[server] bind`                                                  |
-| Stale or missing icons                                | delete `icons/` and restart                                                                          |
+| `jiraf is not ready`                                  | startup failed: use Reload config (⌘⇧R) to see the error screen                                      |
+| Stale or missing icons                                | delete `icons/` in the config folder and restart                                                     |
+| Anything else                                         | look in `jiraf.log` in the config folder (`RUST_LOG=debug` in `.env` for more)                      |
 
 ## License
 

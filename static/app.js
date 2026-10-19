@@ -32,7 +32,7 @@ const mark = (i, f) => (edited[i.k] ??= new Set()).add(f);
 const isEd = (i, f) => edited[i.k]?.has(f) ? 'edited' : '';
 const keyLink = i => `<a class="key" href="${esc(D.jiraBase)}/browse/${esc(i.k)}" target="_blank">${esc(i.k)}</a>`;
 
-// Activity Type values compare whole, ignoring case and accents ("Evolucion tecnologica" = "Evolución Tecnológica").
+// Case- and accent-insensitive form ("Evolucion tecnologica" = "Evolución Tecnológica"): Activity Types and the filter box.
 const norm = v => (v || '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
 function streamOf(i) {
   // root first: the top-most Activity Type wins, so a whole tree (Initiative and below) lives in one tab
@@ -51,14 +51,9 @@ const lblChip = l => `<a class="lbl" href="${esc(D.jiraBase)}/issues/?jql=${enco
 const labels = i => !i.lb?.length ? '' : `<span class="lbls">${i.lb.slice(0, LBL_MAX).map(lblChip).join('')}${i.lb.length > LBL_MAX ? `<span class="lbl more" data-lb="${esc(i.k)}" tabindex="0">+${i.lb.length - LBL_MAX}</span>` : ''}</span>`;
 const isTreeTab = t => t !== 'att';
 
-/* ---------- server calls ---------- */
-async function api(path, body) {
-  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Jiraf': '1' }, body: JSON.stringify(body) };
-  const r = await fetch(path, opt);
-  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-  return j;
-}
+/* ---------- backend calls (Tauri commands; errors arrive as their message) ---------- */
+const api = (cmd, args = {}) => window.__TAURI__.core.invoke(cmd, args)
+  .catch(e => { throw new Error(typeof e === 'string' ? e : e?.message || String(e)); });
 
 /* ---------- state ---------- */
 let state = { proj: ALL, tab: null, q: '', types: new Set(), done: false, sort: null, collapsed: new Set() };
@@ -123,13 +118,15 @@ const cmBtn = i => i.ctx ? '' : i.nc
 
 /* ---------- bubbles + header ---------- */
 function renderTeam() {
-  const chip = (k, label, its, av) => {
+  const chip = (k, label, its, av, err) => {
+    // a bubble whose JQL Jira rejected: no counts, Jira's message on hover
+    if (err) return `<button class="member broken ${k === state.proj ? 'on' : ''}" data-p="${esc(k)}" title="JQL rejected by Jira: ${esc(err)}">${av}<span class="nm">${esc(label)}</span><span class="badge b-red">⚠</span></button>`;
     const o = its.filter(x => !isDone(x)).length, b = its.filter(blocked).length, s = its.filter(stale).length;
     return `<button class="member ${k === state.proj ? 'on' : ''}" data-p="${esc(k)}">${av}<span class="nm">${esc(label)}</span>
       <span class="badge b-grey" title="open">${o}</span>${b ? `<span class="badge b-red" title="blocked">${b}</span>` : ''}${s ? `<span class="badge b-amber" title="Extended Status not updated in ${FU.stale_days}+ days">${s}</span>` : ''}</button>`;
   };
   document.getElementById('team').innerHTML = chip(ALL, 'All', items, '<span class="pav all">∗</span>')
-    + D.bubbles.map(b => chip(b.id, b.name, items.filter(i => i.bubbles.includes(b.id)), bubIcon(b))).join('');
+    + D.bubbles.map(b => chip(b.id, b.name, items.filter(i => i.bubbles.includes(b.id)), bubIcon(b), b.error)).join('');
   document.querySelectorAll('.member').forEach(b => b.onclick = () => select(b.dataset.p));
   updateScrl();   // first: showing the arrows narrows the strip
   // centre the selected bubble, so it never sits under an edge fade
@@ -202,7 +199,7 @@ const COLS = () => [
 function matches(i) {
   if (!state.types.has(i.t) && TYPE_ORDER.includes(i.t)) return false;
   if (isDone(i) && !(state.done && recentDone(i))) return false;
-  return !state.q || (i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '') + ' ' + (i.lb || []).join(' ')).toLowerCase().includes(state.q);
+  return !state.q || norm(i.k + ' ' + i.s + ' ' + i.ext + ' ' + (i.a || '') + ' ' + (i.lb || []).join(' ')).includes(state.q);
 }
 function buildTree() {
   // shown = matching items + their ancestors (ancestors of a hidden type are skipped; children attach higher up)
@@ -252,7 +249,8 @@ function renderScope() {
       if (open) html += rs.sort(cmp).map(r => row(r, 0)).join('');
     }
   } else html = roots.sort(cmp).map(r => row(r, 0)).join('');
-  document.getElementById('tbody').innerHTML = html || `<tr><td colspan="${cols.length}" class="empty">No items match.</td></tr>`;
+  const err = BUB[state.proj]?.error;
+  document.getElementById('tbody').innerHTML = html || `<tr><td colspan="${cols.length}" class="empty">${err ? `This bubble's JQL was rejected by Jira: ${esc(err)}. Fix it in Settings (⌘,).` : 'No items match.'}</td></tr>`;
 }
 document.getElementById('tbody').addEventListener('click', e => {
   const b = e.target.closest('[data-tg]'); if (!b || b.disabled) return;
@@ -279,11 +277,11 @@ function renderAtt() {
     sec('att-D', `✅ Closed in the last ${FU.done_days} days`, done, 'Nothing closed recently.');
 }
 
-/* ---------- edits: POST to jiraf, which writes to Jira and returns the issue as Jira now has it ---------- */
+/* ---------- edits: jiraf writes to Jira and returns the issue as Jira now has it ---------- */
 async function save(i, field, path, body, el, okMsg) {
   el?.classList.add('busy');
   try {
-    const fresh = await api(`/api/issue/${encodeURIComponent(i.k)}/${path}`, body);
+    const fresh = await api(path === 'transition' ? 'transition' : `set_${path}`, { key: i.k, ...body });
     Object.assign(i, fresh, { bubbles: i.bubbles, ctx: i.ctx });
     i.stream = streamOf(i);
     mark(i, field); rerender(); toast(`${esc(i.k)}: ${okMsg}`);
@@ -336,7 +334,7 @@ document.addEventListener('click', async e => {
   if (kind === 'status') {
     openMenu(b, `<div class="mh">Move ${esc(i.k)} to</div><div class="empty">Loading transitions…</div>`);
     let ts;
-    try { ts = await api(`/api/issue/${encodeURIComponent(i.k)}/transitions`); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+    try { ts = await api('transitions', { key: i.k }); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
     menu.innerHTML = `<div class="mh">Move ${esc(i.k)} to</div>` + (ts.length ? ts.map(t => `<button class="opt ${t.to === i.st ? 'cur' : ''}" data-id="${esc(t.id)}" data-to="${esc(t.to)}"><span class="st ${stClass(t.to, t.cat)}">${esc(t.to)}</span>${t.name !== t.to ? `<span style="color:var(--muted);font-size:12px">${esc(t.name)}</span>` : ''}</button>`).join('') : '<div class="empty">No transitions available.</div>');
     placeMenu(b); menu.querySelector('.opt')?.focus();
     menu.querySelectorAll('.opt').forEach(o => o.onclick = () => { closeMenu(); save(i, 'status', 'transition', { id: o.dataset.id }, b, `status → ${esc(o.dataset.to)}`); });
@@ -345,7 +343,7 @@ document.addEventListener('click', async e => {
     // only the priorities this issue's project allows (priority schemes), in the configured order
     openMenu(b, `<div class="mh">Priority</div><div class="empty">Loading…</div>`);
     let allowed;
-    try { allowed = new Set(await api(`/api/issue/${encodeURIComponent(i.k)}/priorities`)); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+    try { allowed = new Set(await api('priorities', { key: i.k })); } catch (err) { menu.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
     const opts = D.priorities.filter(p => allowed.has(p.name));
     menu.innerHTML = `<div class="mh">Priority</div>` + (opts.map(p => `<button class="opt ${p.name === i.pr ? 'cur' : ''}" data-v="${esc(p.name)}">${priIcon(p.name)}${esc(p.name)}</button>`).join('') || '<div class="empty">No priorities available.</div>');
     placeMenu(b); menu.querySelector('.opt')?.focus();
@@ -358,7 +356,7 @@ document.addEventListener('click', async e => {
     const search = async q => {
       const my = ++seq;
       let users;
-      try { users = await api(`/api/issue/${encodeURIComponent(i.k)}/assignable?q=${encodeURIComponent(q)}`); } catch (err) { lst.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+      try { users = await api('assignable', { key: i.k, q }); } catch (err) { lst.innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
       if (my !== seq) return;   // a newer search is on its way
       const opts = [...(q && !'unassigned'.includes(q.toLowerCase()) ? [] : [{ name: '', displayName: null }]), ...users];
       lst.innerHTML = opts.map(u => `<button class="opt ${(u.name || null) === (i.an || null) ? 'cur' : ''}" data-v="${esc(u.name)}" data-d="${esc(u.displayName || '')}">${avatar(u.displayName, u.avatar)}${u.displayName ? esc(title(u.displayName)) : '<i>Unassigned</i>'}</button>`).join('') || '<div class="empty">Nobody matches.</div>';
@@ -420,7 +418,7 @@ function setTab(t) {
 function rerender() { if (!D) return; renderTeam(); renderHead(); renderScope(); renderAtt(); }
 function select(p) { state.proj = p; state.sort = null; writeHash(); rerender(); window.scrollTo({ top: 0 }); }
 document.getElementById('doneTog').onclick = e => { state.done = !state.done; e.currentTarget.classList.toggle('on'); renderScope(); };
-document.getElementById('q').oninput = e => { state.q = e.target.value.toLowerCase(); renderScope(); };
+document.getElementById('q').oninput = e => { state.q = norm(e.target.value); renderScope(); };
 document.addEventListener('keydown', e => {
   if (!D || /INPUT|TEXTAREA/.test(e.target.tagName) || menu.classList.contains('on')) return;
   const order = [ALL, ...D.bubbles.map(b => b.id)], i = order.indexOf(state.proj);
@@ -451,11 +449,11 @@ async function load(refresh) {
   dot.className = 'dot busy'; now.textContent = 'loading…';
   if (!D) document.getElementById('tbody').innerHTML = '<tr><td class="empty">Loading from Jira…</td></tr>';
   let data;
-  try { data = await api('/api/data' + (refresh ? '?refresh=1' : '')); }
+  try { data = await api('data', { refresh: !!refresh }); }
   catch (e) {
     dot.className = 'dot err'; now.textContent = 'error';
     toast(`Could not load from Jira: ${esc(e.message)}`, true);
-    if (!D) document.getElementById('tbody').innerHTML = `<tr><td class="empty">Could not load from Jira: ${esc(e.message)}</td></tr>`;
+    if (!D) document.getElementById('tbody').innerHTML = `<tr><td class="empty failed"><img class="oops" src="jiraf-error.png" alt="">Could not load from Jira: ${esc(e.message)}</td></tr>`;
     return;
   }
   const first = !D;
@@ -481,4 +479,53 @@ async function load(refresh) {
   document.getElementById('sync').title = `Loaded from Jira at ${D.fetchedAt}. ← → switches bubble.`;
   setTab(state.tab); rerender();
 }
-load(false);
+// macOS draws the window buttons over the top bar (overlay title bar): see `.mac .top` in index.html.
+if (navigator.userAgent.includes('Mac')) document.documentElement.classList.add('mac');
+
+/* ---------- Jira links open in the default browser, never inside the jiraf window ---------- */
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[target=_blank]'); if (!a) return;
+  e.preventDefault();
+  api('open_external', { url: a.href }).catch(err => toast(esc(err.message), true));
+}, true);
+
+/* ---------- startup: wait for the config/token/Jira checks, then the dashboard or the error screen ---------- */
+const startup = document.getElementById('startup');
+function showStartupError(s) {
+  document.getElementById('startupMsg').textContent = s.error;
+  document.getElementById('tokBox').hidden = !s.tokenProblem; document.getElementById('tokErr').textContent = '';
+  document.getElementById('startupDir').textContent = s.configDir;
+  document.getElementById('retry').disabled = false; document.getElementById('retry').textContent = 'Retry';
+  document.body.classList.add('failed'); startup.hidden = false;
+}
+async function boot() {
+  const s = await api('app_status');
+  if (s.state === 'starting') return setTimeout(boot, 250);
+  if (s.state === 'failed') return showStartupError(s);
+  if (s.state === 'setup') return openSettings();
+  load(false);
+}
+// Re-read jiraf.toml and .env and run the checks again (Retry button, Reload config menu).
+async function retryFlow() {
+  const b = document.getElementById('retry');
+  b.disabled = true; b.textContent = 'Retrying…';
+  document.getElementById('dot').className = 'dot busy'; document.getElementById('now').textContent = 'loading…';
+  const s = await api('retry');
+  if (s.state === 'ready') location.reload(); else if (s.state === 'setup') openSettings(); else showStartupError(s);
+}
+// Token problem: paste a new one right on the error screen.
+document.getElementById('saveTok').onclick = async () => {
+  const b = document.getElementById('saveTok'), err = document.getElementById('tokErr');
+  b.disabled = true; err.textContent = '';
+  try {
+    const s = await api('save_token', { token: document.getElementById('startTok').value });
+    if (s.state === 'ready') return location.reload();
+    showStartupError(s);
+  } catch (e) { err.textContent = e.message; }
+  b.disabled = false;
+};
+document.getElementById('openSettings').onclick = () => openSettings();
+document.getElementById('retry').onclick = retryFlow;
+window.__TAURI__.event.listen('reload-config', retryFlow);
+document.getElementById('openDir').onclick = () => api('open_config_dir').catch(e => toast(esc(e.message), true));
+boot();

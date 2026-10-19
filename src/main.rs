@@ -1,102 +1,109 @@
-//! jiraf: a lean, stateless follow-up dashboard over Jira (Data Center) Plans.
+//! jiraf: a lean, stateless follow-up dashboard over Jira (Data Center) Plans, as a desktop app.
 //!
-//! Startup: load `.env` and `jiraf.toml` ([`config`]), check the token against Jira, resolve the
-//! Extended Status field name, then serve the page and JSON API ([`api`]) on localhost, guarded by
-//! [`local_only`]. All Jira traffic goes through [`jira`].
+//! Startup: resolve the config folder, then run [`app::init`] in the background (config, token,
+//! Jira, field ids) while the window shows the page. The page talks to the [`api`] commands over
+//! Tauri's IPC; no port is opened. All Jira traffic goes through [`jira`].
+
+// No console window behind the app on Windows release builds.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod api;
+mod app;
 mod config;
 mod jira;
+mod logging;
+mod settings;
 
-use actix_web::body::MessageBody;
-use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::middleware::{Logger, Next, from_fn};
-use actix_web::{App, Error, HttpServer, error, http::Method, web};
-use anyhow::Context;
 use std::path::PathBuf;
+use tauri::menu::{Menu, MenuItem};
+use tauri::{Emitter, Manager};
 
-/// The server only ever listens on localhost, but a browser can still be tricked into talking to it:
-/// reject foreign Host headers (DNS rebinding) and require a custom header on writes, which other
-/// origins can't send without a CORS preflight we never grant.
-async fn local_only(req: ServiceRequest, next: Next<impl MessageBody>) -> Result<ServiceResponse<impl MessageBody>, Error> {
-    let allowed = req.app_data::<web::Data<Vec<String>>>().cloned();
-    let host = req.connection_info().host().to_string();
-    if let Some(allowed) = allowed
-        && !allowed.contains(&host)
-    {
-        return Err(error::ErrorForbidden("unexpected Host header"));
-    }
-    if req.method() != Method::GET {
-        if req.headers().get("x-jiraf").and_then(|v| v.to_str().ok()) != Some("1") {
-            return Err(error::ErrorForbidden("missing X-Jiraf header"));
-        }
-        if let Some(origin) = req.headers().get("origin").and_then(|v| v.to_str().ok())
-            && origin != format!("http://{host}")
-        {
-            return Err(error::ErrorForbidden("cross-origin write"));
-        }
-    }
-    next.call(req).await
-}
-
-/// Entry point: `jiraf [path/to/jiraf.toml]` (defaults to `./jiraf.toml`).
+/// The config folder: `$JIRAF_CONFIG_DIR` if set (handy with `cargo tauri dev`), else the app's
+/// config folder (`~/Library/Application Support/com.dmbuil.jiraf/` on macOS).
 ///
 /// # Errors
-/// Fails fast on a bad config, an invalid token, an unknown Extended Status field id, or a busy port.
-#[actix_web::main]
-async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,actix_server=warn")).init();
+/// If the platform has no config folder.
+fn config_dir(app: &tauri::App) -> tauri::Result<PathBuf> {
+    match std::env::var_os("JIRAF_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        Some(d) => Ok(PathBuf::from(d)),
+        None => app.path().app_config_dir(),
+    }
+}
 
-    let path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("jiraf.toml"));
-    let cfg = config::Config::load(&path)?;
-    let jira = jira::Jira::new(&cfg)?;
+/// The default app menu plus "Settings…" (⌘, / Ctrl+,) and "Reload config" (⌘⇧R / Ctrl+Shift+R) in its
+/// first submenu.
+///
+/// # Errors
+/// If the menu can't be built.
+fn menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app.handle())?;
+    let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let reload = MenuItem::with_id(app, "reload-config", "Reload config", true, Some("CmdOrCtrl+Shift+R"))?;
+    if let Some(first) = menu.items()?.first().and_then(|i| i.as_submenu()) {
+        first.append(&settings)?;
+        first.append(&reload)?;
+    }
+    Ok(menu)
+}
 
-    let me = jira.get("/rest/api/2/myself").await.context("checking JIRA_TOKEN against Jira")?;
-    log::info!("connected to {} as {}", jira.base(), me["displayName"].as_str().unwrap_or("?"));
-    let names = jira::field_names(&jira).await?;
-    let ext_field_name = names
-        .get(&cfg.fields.extended_status)
-        .cloned()
-        .with_context(|| format!("field {} (extended_status) not found in Jira", cfg.fields.extended_status))?;
-
-    let bind = cfg.server.bind.clone();
-    let cfg_icon_dir = cfg.server.icon_dir.clone();
-    let port = bind.rsplit(':').next().unwrap_or("8080").to_string();
-    let hosts: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
-    let state = web::Data::new(api::AppState {
-        cfg,
-        jira,
-        ext_field_name,
-        icon_dir: PathBuf::from(&cfg_icon_dir),
-        cache: Default::default(),
-        icons: Default::default(),
-    });
-
-    log::info!("jiraf on http://{bind}/");
-    HttpServer::new(move || {
-        App::new()
-            .app_data(state.clone())
-            .app_data(web::Data::new(hosts.clone()))
-            .wrap(from_fn(local_only))
-            .wrap(Logger::new("%r %s %Dms"))
-            .service(api::index)
-            .service(api::app_js)
-            .service(api::icon)
-            .service(api::data)
-            .service(api::transitions)
-            .service(api::priorities)
-            .service(api::assignable)
-            .service(api::set_ext)
-            .service(api::set_priority)
-            .service(api::set_assignee)
-            .service(api::set_target)
-            .service(api::set_due)
-            .service(api::transition)
-    })
-    .bind(&bind)
-    .with_context(|| format!("binding {bind}"))?
-    .run()
-    .await?;
-    Ok(())
+/// Entry point: open the window at once and start [`app::init`] in the background.
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            let dir = config_dir(app)?;
+            logging::init(&dir)?;
+            log::info!("jiraf {} starting; config folder: {}", env!("CARGO_PKG_VERSION"), dir.display());
+            app.set_menu(menu(app)?)?;
+            app.manage(app::Holder::new(dir.clone()));
+            let handle = app.handle().clone();
+            let generation = app.state::<app::Holder>().restart();
+            tauri::async_runtime::spawn(async move {
+                let r = app::init(&dir).await;
+                handle.state::<app::Holder>().set(generation, r);
+            });
+            Ok(())
+        })
+        // Reload config: the page runs the same flow as its Retry button. Settings…: the page opens it.
+        .on_menu_event(|app, event| {
+            let name = match event.id().as_ref() {
+                "reload-config" => "reload-config",
+                "settings" => "open-settings",
+                _ => return,
+            };
+            if let Err(e) = app.emit(name, ()) {
+                log::warn!("{name}: {e}");
+            }
+        })
+        // Jira icons and avatars, fetched with the token and cached (see `api::icon_response`).
+        .register_asynchronous_uri_scheme_protocol("jiraf", |ctx, req, responder| {
+            let app = ctx.app_handle().clone();
+            let uri = req.uri().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(api::icon_response(&app.state::<app::Holder>(), &uri).await);
+            });
+        })
+        .invoke_handler(tauri::generate_handler![
+            app::app_status,
+            app::retry,
+            app::open_config_dir,
+            app::open_config_file,
+            api::data,
+            api::transitions,
+            api::priorities,
+            api::assignable,
+            api::set_ext,
+            api::set_priority,
+            api::set_assignee,
+            api::set_target,
+            api::set_due,
+            api::transition,
+            api::open_external,
+            settings::settings,
+            settings::save_settings,
+            settings::save_token,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running jiraf");
 }

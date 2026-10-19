@@ -47,11 +47,19 @@ impl Jira {
     /// # Errors
     /// If the HTTP client can't be built (e.g. TLS backend failure).
     pub fn new(cfg: &Config) -> Result<Self> {
+        Self::with(&cfg.jira.url, &cfg.token)
+    }
+
+    /// Build a client for the instance at `url` (no trailing slash) using `token`. Makes no request yet.
+    ///
+    /// # Errors
+    /// If the HTTP client can't be built (e.g. TLS backend failure).
+    pub fn with(url: &str, token: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("jiraf/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
-        Ok(Self { http, base: cfg.jira.url.clone(), token: cfg.token.clone() })
+        Ok(Self { http, base: url.to_string(), token: token.to_string() })
     }
 
     /// Base URL of the instance (no trailing slash).
@@ -103,6 +111,14 @@ impl Jira {
     /// As [`Jira::call`].
     pub async fn put(&self, path: &str, body: &Value) -> Result<Option<Value>> {
         self.call(Method::PUT, path, Some(body)).await
+    }
+
+    /// Whether Jira accepts `jql`, without fetching any issue.
+    ///
+    /// # Errors
+    /// A [`JiraError`] (400 with Jira's message for bad JQL), or a transport error.
+    pub async fn check_jql(&self, jql: &str) -> Result<()> {
+        self.post("/rest/api/2/search", &serde_json::json!({ "jql": jql, "maxResults": 0, "fields": [] })).await.map(|_| ())
     }
 
     /// Raw bytes for icons/avatars (they need auth on most DC instances), with their content type.
@@ -333,15 +349,31 @@ pub fn strip_order_by(jql: &str) -> &str {
     }
 }
 
+/// What [`load_issues`] found.
+pub struct Loaded {
+    /// Every issue of every working bubble, plus missing ancestors.
+    pub issues: Vec<Issue>,
+    /// Bubbles whose JQL Jira rejected: bubble id → Jira's message.
+    pub broken: HashMap<String, String>,
+}
+
+/// Jira's message if `e` is a rejected search (a `400`, i.e. bad JQL), which breaks only that bubble.
+pub fn bubble_error(e: &anyhow::Error) -> Option<String> {
+    e.downcast_ref::<JiraError>().filter(|j| j.status == StatusCode::BAD_REQUEST).map(|j| j.message.clone())
+}
+
 /// Fetches every bubble's issues (open + recently closed), tags each with its bubbles, then pulls in
 /// missing ancestors so the tree is complete.
 ///
 /// Bubble searches run in parallel and include the changelog. Ancestors are fetched up to four levels,
 /// marked [`Issue::ctx`], and skipped (with a warning) if Jira won't return them.
 ///
+/// A bubble whose JQL Jira rejects ([`bubble_error`]) is left out and listed in [`Loaded::broken`].
+///
 /// # Errors
-/// If any bubble's search fails; the error names the bubble.
-pub async fn load_issues(jira: &Jira, cfg: &Config, ext_field_name: &str) -> Result<Vec<Issue>> {
+/// If a bubble's search fails for any other reason (Jira down, token rejected…); the error names the
+/// bubble.
+pub async fn load_issues(jira: &Jira, cfg: &Config, ext_field_name: &str) -> Result<Loaded> {
     let fields = search_fields(&cfg.fields);
     let searches = cfg.bubbles.iter().map(|b| {
         let jql = format!("({}) AND (statusCategory != Done OR resolved >= -{}d)", strip_order_by(&b.jql), cfg.follow_up.done_days);
@@ -349,8 +381,20 @@ pub async fn load_issues(jira: &Jira, cfg: &Config, ext_field_name: &str) -> Res
         async move { (b.id.clone(), jira.search(&jql, fields, true).await.with_context(|| format!("bubble `{}`", b.id))) }
     });
     let mut by_key: BTreeMap<String, Issue> = BTreeMap::new();
+    let mut broken = HashMap::new();
     for (bubble, res) in futures_util::future::join_all(searches).await {
-        for raw in res? {
+        let raws = match res {
+            Ok(raws) => raws,
+            Err(e) => match bubble_error(&e) {
+                Some(m) => {
+                    log::warn!("bubble `{bubble}`: Jira rejected its JQL: {m}");
+                    broken.insert(bubble, m);
+                    continue;
+                }
+                None => return Err(e),
+            },
+        };
+        for raw in raws {
             let issue = map_issue(&raw, &cfg.fields, ext_field_name);
             by_key.entry(issue.k.clone()).or_insert(issue).bubbles.push(bubble.clone());
         }
@@ -382,7 +426,7 @@ pub async fn load_issues(jira: &Jira, cfg: &Config, ext_field_name: &str) -> Res
             }
         }
     }
-    Ok(by_key.into_values().collect())
+    Ok(Loaded { issues: by_key.into_values().collect(), broken })
 }
 
 /// One issue, freshly read with its changelog (used right after an edit).
@@ -415,6 +459,15 @@ pub async fn field_names(jira: &Jira) -> Result<HashMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_jql_errors_break_a_single_bubble() {
+        let jql = anyhow::Error::from(JiraError { status: StatusCode::BAD_REQUEST, message: "Error in the JQL Query".into() }).context("bubble `x`");
+        assert_eq!(bubble_error(&jql).as_deref(), Some("Error in the JQL Query"));
+        let auth = anyhow::Error::from(JiraError { status: StatusCode::UNAUTHORIZED, message: "no".into() });
+        assert_eq!(bubble_error(&auth), None);
+        assert_eq!(bubble_error(&anyhow::anyhow!("timeout")), None);
+    }
 
     #[test]
     fn strips_order_by() {

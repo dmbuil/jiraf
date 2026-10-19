@@ -1,26 +1,26 @@
-//! HTTP handlers. Everything is read from / written to Jira on demand; the only memory is a short-lived
-//! cache of the dashboard payload and of icons.
+//! Tauri commands called by the page. Everything is read from / written to Jira on demand; the only
+//! memory is a short-lived cache of the dashboard payload and of icons.
 //!
-//! | Route | Handler |
+//! | Command (args) | Returns |
 //! |---|---|
-//! | `GET /`, `GET /app.js` | [`index`], [`app_js`] |
-//! | `GET /icon?u=` | [`icon`] |
-//! | `GET /api/data` | [`data`] |
-//! | `GET /api/issue/{key}/transitions` · `/priorities` · `/assignable` | [`transitions`], [`priorities`], [`assignable`] |
-//! | `POST /api/issue/{key}/ext` · `/priority` · `/assignee` · `/target` · `/due` · `/transition` | [`set_ext`], [`set_priority`], [`set_assignee`], [`set_target`], [`set_due`], [`transition`] |
+//! | [`data`] `(refresh)` | the dashboard payload ([`build_data`]) |
+//! | [`transitions`] · [`priorities`] `(key)`, [`assignable`] `(key, q)` | lists for the edit menus |
+//! | [`set_ext`] `(key, value)` · [`set_priority`] `(key, name)` · [`set_assignee`] `(key, name)` · [`set_target`] `(key, date)` · [`set_due`] `(key, date)` · [`transition`] `(key, id)` | the updated [`Issue`] |
 //!
-//! Errors are returned as `{ "error": "…" }` (see [`ApiError`]).
+//! Every command fails with "jiraf is not ready" until startup succeeded ([`Holder::ready`]). Errors
+//! reach the page as their message (see [`ApiError`]).
 
+use crate::app::Holder;
 use crate::config::Config;
 use crate::jira::{self, Issue, Jira, JiraError};
-use actix_web::{HttpResponse, ResponseError, get, http::StatusCode, post, web};
-use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tauri::State;
 use std::time::{Duration, Instant};
 
-/// State shared by all workers.
+/// State shared by all commands, built by [`crate::app::init`].
 pub struct AppState {
     /// The loaded configuration.
     pub cfg: Config,
@@ -38,7 +38,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Drop the cached dashboard payload, so the next `/api/data` reads Jira again.
+    /// Drop the cached dashboard payload, so the next [`data`] reads Jira again.
     async fn invalidate(&self) {
         *self.cache.lock().await = None;
     }
@@ -46,12 +46,8 @@ impl AppState {
 
 /* ---------- errors ---------- */
 
-/// Any handler error. Rendered as `{ "error": "…" }` with a status derived from the cause:
-///
-/// - a Jira `4xx` keeps its status (e.g. `400` validation, `403` permission, `404` not found);
-/// - other Jira failures become `502 Bad Gateway`;
-/// - invalid input from the page ([`bad`]) is `400`;
-/// - anything else is `500`.
+/// Any command error. Reaches the page as its message: Jira's own text for a [`JiraError`], the full
+/// error chain otherwise. Logged when sent.
 #[derive(Debug)]
 pub struct ApiError(anyhow::Error);
 
@@ -65,26 +61,18 @@ impl<E: Into<anyhow::Error>> From<E> for ApiError {
         Self(e.into())
     }
 }
-impl ResponseError for ApiError {
-    fn status_code(&self) -> StatusCode {
-        match self.0.downcast_ref::<JiraError>() {
-            Some(j) if j.status.is_client_error() => StatusCode::from_u16(j.status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            Some(_) => StatusCode::BAD_GATEWAY,
-            None if self.0.downcast_ref::<BadRequest>().is_some() => StatusCode::BAD_REQUEST,
-            None => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-    fn error_response(&self) -> HttpResponse {
+impl Serialize for ApiError {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         log::warn!("{self}");
         let msg = match self.0.downcast_ref::<JiraError>() {
             Some(j) => j.to_string(),
             None => format!("{:#}", self.0),
         };
-        HttpResponse::build(self.status_code()).json(json!({ "error": msg }))
+        ser.serialize_str(&msg)
     }
 }
 
-/// Marker error for invalid input from the page (bad key, date, length…), mapped to `400`.
+/// Marker error for invalid input from the page (bad key, date, length…).
 #[derive(Debug)]
 struct BadRequest(String);
 impl std::fmt::Display for BadRequest {
@@ -94,19 +82,19 @@ impl std::fmt::Display for BadRequest {
 }
 impl std::error::Error for BadRequest {}
 
-/// A `400 Bad Request` [`ApiError`] with the given message.
-fn bad(msg: impl Into<String>) -> ApiError {
+/// An [`ApiError`] for invalid input, with the given message.
+pub fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(BadRequest(msg.into()).into())
 }
 
-/// Result type of handlers and helpers (`HttpResponse` by default).
-type ApiResult<T = HttpResponse> = Result<T, ApiError>;
+/// Result type of commands and helpers (a JSON value by default).
+pub type ApiResult<T = Value> = Result<T, ApiError>;
 
 /// Issue keys go into Jira URL paths, so only accept the canonical shape: `PROJ-123`, where the
 /// project starts with an uppercase letter and contains only `A-Z`, digits and `_`.
 ///
 /// # Errors
-/// `400` for anything else.
+/// An [`ApiError`] for anything else.
 fn check_key(key: &str) -> ApiResult<()> {
     let (proj, num) = key.split_once('-').ok_or_else(|| bad("bad issue key"))?;
     let ok = !proj.is_empty()
@@ -119,39 +107,25 @@ fn check_key(key: &str) -> ApiResult<()> {
 
 /* ---------- page + icons ---------- */
 
-/// Only our own script runs; Jira text is always rendered as text, but this is the safety net.
-const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+/// Origin of the `jiraf` URI scheme as the page sees it: Tauri exposes custom schemes as
+/// `<scheme>://localhost` on macOS/Linux and `http://<scheme>.localhost` on Windows (WebView2).
+#[cfg(windows)]
+pub const ICON_ORIGIN: &str = "http://jiraf.localhost";
+/// Origin of the `jiraf` URI scheme as the page sees it: Tauri exposes custom schemes as
+/// `<scheme>://localhost` on macOS/Linux and `http://<scheme>.localhost` on Windows (WebView2).
+#[cfg(not(windows))]
+pub const ICON_ORIGIN: &str = "jiraf://localhost";
 
-/// `GET /`: the page (compiled into the binary), with [`CSP`] and `no-cache`.
-#[get("/")]
-pub async fn index() -> HttpResponse {
-    HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .insert_header(("Content-Security-Policy", CSP))
-        .insert_header(("Cache-Control", "no-cache"))
-        .body(include_str!("../static/index.html"))
-}
-
-/// `GET /app.js`: the page script (compiled into the binary).
-#[get("/app.js")]
-pub async fn app_js() -> HttpResponse {
-    // no-cache: a rebuilt binary must never be paired with a stale script
-    HttpResponse::Ok()
-        .content_type("text/javascript; charset=utf-8")
-        .insert_header(("Cache-Control", "no-cache"))
-        .body(include_str!("../static/app.js"))
-}
-
-/// Rewrite a Jira-hosted icon/avatar URL to jiraf's own `/icon?u=<path>` proxy, so the browser never
-/// talks to Jira. URLs on other hosts are returned unchanged.
+/// Rewrite a Jira-hosted icon/avatar URL to jiraf's own `<ICON_ORIGIN>/icon?u=<path>` scheme, so the
+/// page never talks to Jira. URLs on other hosts are returned unchanged.
 pub fn icon_url(base: &str, url: &str) -> String {
     match url.strip_prefix(base) {
-        Some(path) => format!("/icon?u={}", pct(path)),
+        Some(path) => format!("{ICON_ORIGIN}/icon?u={}", pct(path)),
         None => url.to_string(),
     }
 }
 
-/// Avatar URL for the page: the `/icon` proxy URL when Jira hosts it, `None` otherwise (other hosts
+/// Avatar URL for the page: the icon scheme URL when Jira hosts it, `None` otherwise (other hosts
 /// are blocked by the CSP, and we don't want the browser calling them anyway).
 fn local_avatar(base: &str, url: &str) -> Option<String> {
     url.strip_prefix(base).filter(|p| check_icon_path(p).is_ok()).map(|_| icon_url(base, url))
@@ -167,24 +141,21 @@ fn pct(s: &str) -> String {
         .collect()
 }
 
-/// Query of `GET /icon`.
-#[derive(Deserialize)]
-pub struct IconQ {
-    /// Jira path of the icon, e.g. `/secure/viewavatar?size=xsmall&avatarId=1`.
-    u: String,
-}
-
 /// Jira paths the icon proxy is allowed to fetch: avatars, built-in icons and static resources.
 const ICON_PREFIXES: &[&str] = &["/secure/viewavatar", "/secure/projectavatar", "/secure/useravatar", "/images/", "/download/resources/", "/s/"];
 /// Content types saved to the icon folder, with the file extension used for each.
 const ICON_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("svg", "image/svg+xml"), ("gif", "image/gif"), ("jpg", "image/jpeg"), ("ico", "image/x-icon")];
 
-/// Only let the proxy fetch paths under [`ICON_PREFIXES`], with no `..` and no protocol-relative `//`.
+/// Only let the proxy fetch paths under [`ICON_PREFIXES`], with no protocol-relative `//` and nothing
+/// that could climb out of them: `..`, `\\`, or their percent-encoded forms (`%2e`, `%5c`), which the URL
+/// parser would turn back into `..` and `/`.
 ///
 /// # Errors
-/// `400` for anything else.
+/// An [`ApiError`] for anything else.
 fn check_icon_path(u: &str) -> ApiResult<()> {
-    if u.starts_with("//") || u.contains("..") || !ICON_PREFIXES.iter().any(|p| u.starts_with(p)) {
+    let lower = u.to_ascii_lowercase();
+    let climbs = u.contains("..") || u.contains('\\') || lower.contains("%2e") || lower.contains("%5c");
+    if u.starts_with("//") || climbs || !ICON_PREFIXES.iter().any(|p| u.starts_with(p)) {
         return Err(bad("not an icon path"));
     }
     Ok(())
@@ -230,12 +201,38 @@ async fn get_icon(st: &AppState, u: &str) -> ApiResult<(String, Vec<u8>)> {
     Ok(v)
 }
 
-/// `GET /icon?u=<jira path>`: a Jira icon/avatar, cached for a day by the browser.
-#[get("/icon")]
-pub async fn icon(st: web::Data<AppState>, q: web::Query<IconQ>) -> ApiResult {
-    check_icon_path(&q.u)?;
-    let (ct, bytes) = get_icon(&st, &q.u).await?;
-    Ok(HttpResponse::Ok().content_type(ct).insert_header(("Cache-Control", "max-age=86400")).body(bytes))
+/// The Jira path in an icon scheme request (`…/icon?u=<path>`, either origin), decoded.
+fn icon_query(uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(uri).ok()?;
+    if url.path() != "/icon" {
+        return None;
+    }
+    url.query_pairs().find(|(k, _)| k == "u").map(|(_, v)| v.into_owned())
+}
+
+/// Answer one `jiraf://` (or `http://jiraf.localhost`) request: the icon with its content type,
+/// cached for a day by the webview (errors are never cached). `400` for anything but an allowed icon path, `503` before startup
+/// succeeded, `502` if Jira won't return it.
+pub async fn icon_response(holder: &Holder, uri: &str) -> tauri::http::Response<Vec<u8>> {
+    let reply = |status: u16, ct: &str, body: Vec<u8>| {
+        // only successes are cached: a transient failure must not stick for a day
+        let cache = if status == 200 { "max-age=86400" } else { "no-store" };
+        tauri::http::Response::builder().status(status).header("Content-Type", ct).header("Cache-Control", cache).body(body).unwrap()
+    };
+    let Some(u) = icon_query(uri).filter(|u| check_icon_path(u).is_ok()) else {
+        log::warn!("icon request refused: {uri}");
+        return reply(400, "text/plain", b"not an icon path".to_vec());
+    };
+    let Ok(st) = holder.ready() else {
+        return reply(503, "text/plain", b"jiraf is not ready".to_vec());
+    };
+    match get_icon(&st, &u).await {
+        Ok((ct, bytes)) => reply(200, &ct, bytes),
+        Err(e) => {
+            log::warn!("icon {u}: {e}");
+            reply(502, "text/plain", e.to_string().into_bytes())
+        }
+    }
 }
 
 /// Make sure every icon the page will show is in the local folder before the page asks for it.
@@ -250,38 +247,31 @@ async fn prefetch_icons(st: &AppState, paths: Vec<String>) {
 
 /* ---------- dashboard data ---------- */
 
-/// Query of `GET /api/data`.
-#[derive(Deserialize)]
-pub struct DataQ {
-    /// Present (any value) to bypass the cache.
-    #[serde(default)]
-    refresh: Option<String>,
-}
-
-/// `GET /api/data[?refresh=1]`: the dashboard payload (see [`build_data`]), served from the cache
-/// while it is younger than `cache_seconds`.
-#[get("/api/data")]
-pub async fn data(st: web::Data<AppState>, q: web::Query<DataQ>) -> ApiResult {
+/// The dashboard payload (see [`build_data`]), served from the cache while it is younger than
+/// `cache_seconds`, unless `refresh` is set.
+#[tauri::command]
+pub async fn data(holder: State<'_, Holder>, refresh: bool) -> ApiResult {
+    let st = holder.ready()?;
     let ttl = Duration::from_secs(st.cfg.jira.cache_seconds);
     // Held across the fetch so concurrent page loads share one round of Jira calls.
     let mut cache = st.cache.lock().await;
-    if q.refresh.is_none()
+    if !refresh
         && let Some((at, v)) = cache.as_ref()
         && at.elapsed() < ttl
     {
-        return Ok(HttpResponse::Ok().json(v.as_ref()));
+        return Ok(v.as_ref().clone());
     }
     let v = Arc::new(build_data(&st).await?);
     *cache = Some((Instant::now(), v.clone()));
-    Ok(HttpResponse::Ok().json(v.as_ref()))
+    Ok(v.as_ref().clone())
 }
 
 /// Build the dashboard payload:
 ///
 /// ```json
 /// { "today": "YYYY-MM-DD", "fetchedAt": "HH:MM", "jiraBase": "…",
-///   "followUp": {…}, "tabs": […], "bubbles": [{ "id", "name", "jql", "icon" }],
-///   "types": { "Epic": "/icon?u=…" }, "priorities": [{ "name", "icon" }],
+///   "followUp": {…}, "tabs": […], "bubbles": [{ "id", "name", "jql", "icon", "error" }],
+///   "types": { "Epic": "jiraf://localhost/icon?u=…" }, "priorities": [{ "name", "icon" }],
 ///   "issues": [Issue…] }
 /// ```
 ///
@@ -289,15 +279,17 @@ pub async fn data(st: web::Data<AppState>, q: web::Query<DataQ>) -> ApiResult {
 /// referenced is fetched into the icon folder before returning.
 ///
 /// # Errors
-/// If any bubble search, or the issue type / priority lists, can't be read.
+/// If the issue type / priority lists can't be read, or a bubble search fails other than by bad JQL
+/// (a bubble with bad JQL just carries its `error`).
 async fn build_data(st: &AppState) -> anyhow::Result<Value> {
     let (cfg, j) = (&st.cfg, &st.jira);
     let base = j.base();
-    let (mut issues, types, prios) = tokio::try_join!(
+    let (loaded, types, prios) = tokio::try_join!(
         jira::load_issues(j, cfg, &st.ext_field_name),
         j.get("/rest/api/2/issuetype"),
         j.get("/rest/api/2/priority"),
     )?;
+    let mut issues = loaded.issues;
 
     // Only the issue types that actually show up (Jira may define hundreds).
     let used: std::collections::HashSet<&str> = issues.iter().map(|i| i.t.as_str()).chain(cfg.follow_up.hierarchy.iter().map(String::as_str)).collect();
@@ -344,7 +336,7 @@ async fn build_data(st: &AppState) -> anyhow::Result<Value> {
             },
             None => None,
         };
-        bubbles.push(json!({ "id": b.id, "name": b.name, "jql": b.jql, "icon": avatar }));
+        bubbles.push(json!({ "id": b.id, "name": b.name, "jql": b.jql, "icon": avatar, "error": loaded.broken.get(&b.id) }));
     }
 
     prefetch_icons(st, icon_paths).await;
@@ -365,10 +357,11 @@ async fn build_data(st: &AppState) -> anyhow::Result<Value> {
 
 /* ---------- reads for menus / popovers ---------- */
 
-/// `GET /api/issue/{key}/transitions`: transitions the workflow allows from the issue's current status,
-/// as `[{ "id", "name", "to", "cat" }]` (`to` = target status, `cat` = its category key).
-#[get("/api/issue/{key}/transitions")]
-pub async fn transitions(st: web::Data<AppState>, key: web::Path<String>) -> ApiResult {
+/// Transitions the workflow allows from the issue's current status, as `[{ "id", "name", "to", "cat" }]`
+/// (`to` = target status, `cat` = its category key).
+#[tauri::command]
+pub async fn transitions(holder: State<'_, Holder>, key: String) -> ApiResult<Vec<Value>> {
+    let st = holder.ready()?;
     check_key(&key)?;
     let v = st.jira.get(&format!("/rest/api/2/issue/{key}/transitions")).await?;
     let list: Vec<Value> = v["transitions"]
@@ -377,35 +370,30 @@ pub async fn transitions(st: web::Data<AppState>, key: web::Path<String>) -> Api
         .flatten()
         .map(|t| json!({ "id": t["id"], "name": t["name"], "to": t["to"]["name"], "cat": t["to"]["statusCategory"]["key"] }))
         .collect();
-    Ok(HttpResponse::Ok().json(list))
+    Ok(list)
 }
 
-/// `GET /api/issue/{key}/priorities`: names of the priorities this issue may take, in Jira's order.
+/// Names of the priorities this issue may take, in Jira's order.
 ///
 /// Jira DC assigns priority schemes per project, so the global priority list can hold values a
 /// given issue can't use; the issue's edit metadata has the real list.
-#[get("/api/issue/{key}/priorities")]
-pub async fn priorities(st: web::Data<AppState>, key: web::Path<String>) -> ApiResult {
+#[tauri::command]
+pub async fn priorities(holder: State<'_, Holder>, key: String) -> ApiResult<Vec<String>> {
+    let st = holder.ready()?;
     check_key(&key)?;
     let v = st.jira.get(&format!("/rest/api/2/issue/{key}/editmeta")).await?;
-    let names: Vec<&str> = v["fields"]["priority"]["allowedValues"].as_array().into_iter().flatten().filter_map(|p| p["name"].as_str()).collect();
-    Ok(HttpResponse::Ok().json(names))
+    let names = v["fields"]["priority"]["allowedValues"].as_array().into_iter().flatten().filter_map(|p| p["name"].as_str().map(String::from)).collect();
+    Ok(names)
 }
 
-/// Query of `GET /api/issue/{key}/assignable`.
-#[derive(Deserialize)]
-pub struct UserQ {
-    /// Text to search in usernames / display names; empty lists the first matches.
-    #[serde(default)]
-    q: String,
-}
-
-/// `GET /api/issue/{key}/assignable?q=`: up to 20 active users who can be assigned the issue,
-/// as `[{ "name", "displayName", "avatar" }]` (`avatar`: local `/icon` URL, or null when Jira doesn't host it).
-#[get("/api/issue/{key}/assignable")]
-pub async fn assignable(st: web::Data<AppState>, key: web::Path<String>, q: web::Query<UserQ>) -> ApiResult {
+/// Up to 20 active users who can be assigned the issue, matching `q` (usernames / display names; empty
+/// lists the first matches), as `[{ "name", "displayName", "avatar" }]` (`avatar`: local icon URL, or
+/// null when Jira doesn't host it).
+#[tauri::command]
+pub async fn assignable(holder: State<'_, Holder>, key: String, q: String) -> ApiResult<Vec<Value>> {
+    let st = holder.ready()?;
     check_key(&key)?;
-    let path = format!("/rest/api/2/user/assignable/search?issueKey={key}&maxResults=20&username={}", pct(&q.q));
+    let path = format!("/rest/api/2/user/assignable/search?issueKey={key}&maxResults=20&username={}", pct(&q));
     let v = st.jira.get(&path).await?;
     let users: Vec<Value> = v
         .as_array()
@@ -417,34 +405,30 @@ pub async fn assignable(st: web::Data<AppState>, key: web::Path<String>, q: web:
             json!({ "name": u["name"], "displayName": u["displayName"], "avatar": avatar })
         })
         .collect();
-    Ok(HttpResponse::Ok().json(users))
+    Ok(users)
 }
 
 /* ---------- writes: each one returns the issue as Jira now has it ---------- */
 
 /// Common tail of every write: invalidate the cache and answer with the issue as Jira now has it.
-async fn after_write(st: &AppState, key: &str) -> ApiResult {
+async fn after_write(st: &AppState, key: &str) -> ApiResult<Issue> {
     st.invalidate().await;
     let mut issue: Issue = jira::load_issue(&st.jira, &st.cfg, &st.ext_field_name, key).await?;
     issue.av = issue.av.and_then(|u| local_avatar(st.jira.base(), &u));
-    Ok(HttpResponse::Ok().json(issue))
+    Ok(issue)
 }
 
-/// Body of `POST /api/issue/{key}/ext`.
-#[derive(Deserialize)]
-pub struct ExtBody {
-    /// New Extended Status text; whitespace (including newlines) is collapsed to single spaces.
-    value: String,
-}
-
-/// `POST /api/issue/{key}/ext` `{ "value": "…" }`: set the Extended Status. Returns the updated [`Issue`].
+/// Set the Extended Status to `value` (whitespace, including newlines, collapsed to single spaces).
+/// Returns the updated [`Issue`].
 ///
-/// `400` if longer than `ext_max_len`.
-#[post("/api/issue/{key}/ext")]
-pub async fn set_ext(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<ExtBody>) -> ApiResult {
+/// # Errors
+/// If longer than `ext_max_len`, or Jira refuses.
+#[tauri::command]
+pub async fn set_ext(holder: State<'_, Holder>, key: String, value: String) -> ApiResult<Issue> {
+    let st = holder.ready()?;
     check_key(&key)?;
     // Single-line text field.
-    let v = b.value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let v = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if v.chars().count() > st.cfg.follow_up.ext_max_len {
         return Err(bad(format!("Extended Status is limited to {} characters", st.cfg.follow_up.ext_max_len)));
     }
@@ -453,60 +437,47 @@ pub async fn set_ext(st: web::Data<AppState>, key: web::Path<String>, b: web::Js
     after_write(&st, &key).await
 }
 
-/// Body of `POST …/priority` and `POST …/assignee`.
-#[derive(Deserialize)]
-pub struct NameBody {
-    /// Priority name, or assignee username; `null`/empty unassigns (assignee only).
-    name: Option<String>,
-}
-
-/// `POST /api/issue/{key}/priority` `{ "name": "Major" }`: set the priority. Returns the updated [`Issue`].
-#[post("/api/issue/{key}/priority")]
-pub async fn set_priority(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<NameBody>) -> ApiResult {
+/// Set the priority to `name`. Returns the updated [`Issue`].
+#[tauri::command]
+pub async fn set_priority(holder: State<'_, Holder>, key: String, name: Option<String>) -> ApiResult<Issue> {
+    let st = holder.ready()?;
     check_key(&key)?;
-    let name = b.name.as_deref().filter(|n| !n.is_empty()).ok_or_else(|| bad("priority name required"))?;
+    let name = name.as_deref().filter(|n| !n.is_empty()).ok_or_else(|| bad("priority name required"))?;
     st.jira.put(&format!("/rest/api/2/issue/{key}"), &json!({ "fields": { "priority": { "name": name } } })).await?;
     after_write(&st, &key).await
 }
 
-/// `POST /api/issue/{key}/assignee` `{ "name": "jdoe" | null }`: assign or unassign.
-/// Returns the updated [`Issue`].
-#[post("/api/issue/{key}/assignee")]
-pub async fn set_assignee(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<NameBody>) -> ApiResult {
+/// Assign the issue to username `name`, or unassign it (`None` / empty). Returns the updated [`Issue`].
+#[tauri::command]
+pub async fn set_assignee(holder: State<'_, Holder>, key: String, name: Option<String>) -> ApiResult<Issue> {
+    let st = holder.ready()?;
     check_key(&key)?;
-    let name = b.name.as_deref().filter(|n| !n.is_empty());
+    let name = name.as_deref().filter(|n| !n.is_empty());
     st.jira.put(&format!("/rest/api/2/issue/{key}/assignee"), &json!({ "name": name })).await?;
     after_write(&st, &key).await
 }
 
-/// Body of `POST /api/issue/{key}/target` and `/due`.
-#[derive(Deserialize)]
-pub struct DateBody {
-    /// `YYYY-MM-DD`, or `null`/empty to clear.
-    date: Option<String>,
+/// Set Target end to `date` (`YYYY-MM-DD`), or clear it (`None` / empty). Returns the updated [`Issue`].
+#[tauri::command]
+pub async fn set_target(holder: State<'_, Holder>, key: String, date: Option<String>) -> ApiResult<Issue> {
+    let st = holder.ready()?;
+    set_date(&st, &key, &st.cfg.fields.target_end, date.as_deref()).await
 }
 
-/// `POST /api/issue/{key}/target` `{ "date": "2026-12-31" | null }`: set or clear Target end.
-/// Returns the updated [`Issue`].
-#[post("/api/issue/{key}/target")]
-pub async fn set_target(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<DateBody>) -> ApiResult {
-    set_date(&st, &key, &st.cfg.fields.target_end, &b).await
-}
-
-/// `POST /api/issue/{key}/due` `{ "date": "2026-12-31" | null }`: set or clear Jira's Due date.
-/// Returns the updated [`Issue`].
-#[post("/api/issue/{key}/due")]
-pub async fn set_due(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<DateBody>) -> ApiResult {
-    set_date(&st, &key, "duedate", &b).await
+/// Set Jira's Due date to `date` (`YYYY-MM-DD`), or clear it (`None` / empty). Returns the updated [`Issue`].
+#[tauri::command]
+pub async fn set_due(holder: State<'_, Holder>, key: String, date: Option<String>) -> ApiResult<Issue> {
+    let st = holder.ready()?;
+    set_date(&st, &key, "duedate", date.as_deref()).await
 }
 
 /// Shared body of the date writes: validate the key and the date, then set `field` (or clear it).
 ///
 /// # Errors
-/// `400` for a bad key or a date that isn't `YYYY-MM-DD`; Jira's own error otherwise.
-async fn set_date(st: &AppState, key: &str, field: &str, b: &DateBody) -> ApiResult {
+/// For a bad key or a date that isn't `YYYY-MM-DD`; Jira's own error otherwise.
+async fn set_date(st: &AppState, key: &str, field: &str, date: Option<&str>) -> ApiResult<Issue> {
     check_key(key)?;
-    let date = b.date.as_deref().filter(|d| !d.is_empty());
+    let date = date.filter(|d| !d.is_empty());
     if let Some(d) = date {
         chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| bad("date must be YYYY-MM-DD"))?;
     }
@@ -514,23 +485,40 @@ async fn set_date(st: &AppState, key: &str, field: &str, b: &DateBody) -> ApiRes
     after_write(st, key).await
 }
 
-/// Body of `POST /api/issue/{key}/transition`.
-#[derive(Deserialize)]
-pub struct TransitionBody {
-    /// Transition id from [`transitions`] (digits only).
-    id: String,
-}
-
-/// `POST /api/issue/{key}/transition` `{ "id": "31" }`: move the issue through a workflow transition.
-/// Returns the updated [`Issue`].
-#[post("/api/issue/{key}/transition")]
-pub async fn transition(st: web::Data<AppState>, key: web::Path<String>, b: web::Json<TransitionBody>) -> ApiResult {
+/// Move the issue through workflow transition `id` (from [`transitions`], digits only). Returns the
+/// updated [`Issue`].
+#[tauri::command]
+pub async fn transition(holder: State<'_, Holder>, key: String, id: String) -> ApiResult<Issue> {
+    let st = holder.ready()?;
     check_key(&key)?;
-    if b.id.is_empty() || !b.id.chars().all(|c| c.is_ascii_digit()) {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
         return Err(bad("bad transition id"));
     }
-    st.jira.post(&format!("/rest/api/2/issue/{key}/transitions"), &json!({ "transition": { "id": b.id } })).await?;
+    st.jira.post(&format!("/rest/api/2/issue/{key}/transitions"), &json!({ "transition": { "id": id } })).await?;
     after_write(&st, &key).await
+}
+
+/* ---------- links ---------- */
+
+/// Whether the page may open `url` in the browser: only pages of the configured Jira (`base` + `/…`).
+fn jira_link_allowed(base: &str, url: &str) -> bool {
+    url.starts_with(&format!("{base}/"))
+}
+
+/// Open a Jira link (issue, search, comments) in the default browser.
+///
+/// # Errors
+/// For any URL outside the configured Jira, or if the system can't open it.
+#[tauri::command]
+pub fn open_external(app: tauri::AppHandle, holder: State<'_, Holder>, url: String) -> ApiResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let st = holder.ready()?;
+    if !jira_link_allowed(st.jira.base(), &url) {
+        log::warn!("refused to open {url}");
+        return Err(bad("only Jira links can be opened"));
+    }
+    app.opener().open_url(url, None::<&str>)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -549,7 +537,53 @@ mod tests {
     #[test]
     fn icon_urls() {
         let b = "https://jira.x";
-        assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), "/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1");
+        assert_eq!(icon_url(b, "https://jira.x/secure/viewavatar?size=xsmall&avatarId=1"), format!("{ICON_ORIGIN}/icon?u=/secure/viewavatar%3Fsize%3Dxsmall%26avatarId%3D1"));
         assert_eq!(icon_url(b, "https://other/x.png"), "https://other/x.png");
+    }
+
+    #[test]
+    fn icon_paths_cannot_climb_out() {
+        assert!(check_icon_path("/images/icons/priorities/major.svg").is_ok());
+        assert!(check_icon_path("/secure/viewavatar?size=xsmall&avatarId=1").is_ok());
+        // the URL parser treats %2e%2e (any case) as `..` and `\` as `/`
+        for u in ["/images/../rest/api/2/myself", "/images/%2e%2e/%2e%2e/rest/api/2/myself", "/images/%2E%2e/x", "/images/.%2e/x", "/images\\..\\x", "/images/%5c..%5cx"] {
+            assert!(check_icon_path(u).is_err(), "{u}");
+        }
+    }
+
+    #[test]
+    fn jira_links_only() {
+        let b = "https://jira.x";
+        for u in ["https://jira.x/browse/DV-1", "https://jira.x/issues/?jql=labels%20%3D%20%22a%22"] {
+            assert!(jira_link_allowed(b, u), "{u}");
+        }
+        for u in ["https://jira.x", "https://jira.x.evil/browse/DV-1", "https://jira.x@evil/", "http://jira.x/browse/DV-1", "javascript:alert(1)"] {
+            assert!(!jira_link_allowed(b, u), "{u}");
+        }
+    }
+
+    #[tokio::test]
+    async fn icon_errors_are_not_cached() {
+        let h = Holder::new("/x".into());
+        for uri in ["jiraf://localhost/icon?u=/rest/api/2/myself", "jiraf://localhost/icon?u=/images/x.png"] {
+            let r = icon_response(&h, uri).await;
+            assert!(r.status().as_u16() >= 400, "{uri}");
+            assert_eq!(r.headers()["Cache-Control"], "no-store", "{uri}");
+        }
+    }
+
+    #[test]
+    fn icon_origin_per_platform() {
+        assert_eq!(ICON_ORIGIN, if cfg!(windows) { "http://jiraf.localhost" } else { "jiraf://localhost" });
+    }
+
+    #[test]
+    fn icon_query_round_trip() {
+        let b = "https://jira.x";
+        for p in ["/secure/viewavatar?size=xsmall&avatarId=1", "/images/icons/a b%20c.png"] {
+            assert_eq!(icon_query(&icon_url(b, &format!("{b}{p}"))).as_deref(), Some(p));
+        }
+        assert_eq!(icon_query("jiraf://localhost/other?u=/images/x"), None);
+        assert_eq!(icon_query("http://jiraf.localhost/icon?u=/images/x").as_deref(), Some("/images/x"));
     }
 }
