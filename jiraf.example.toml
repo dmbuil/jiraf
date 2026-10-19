@@ -2,8 +2,8 @@
 # Secrets live in .env (JIRA_TOKEN), never here.
 
 [server]
-bind = "127.0.0.1:8080"   # keep it on localhost
-icon_dir = "icons"        # local copies of Jira icons (disposable cache)
+icon_dir = "icons"        # local copies of Jira icons (disposable cache), relative to this folder
+# bind = "…"              # no longer used: the app opens no port (still accepted, ignored)
 
 [jira]
 url = "https://jira.example.com"

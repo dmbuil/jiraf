@@ -1,11 +1,17 @@
-//! Configuration: `jiraf.toml` (everything but secrets) plus `JIRA_TOKEN` from the environment / `.env`.
+//! Configuration: `jiraf.toml` (everything but secrets) plus `JIRA_TOKEN` from `.env`, both in the
+//! config folder (see [`Config::load`]).
 //!
-//! [`Config::load`] parses and validates the file once at startup. Every section except `[jira]`,
+//! [`Config::load`] parses and validates the file at startup and on every reload. Every section except `[jira]`,
 //! `[[bubbles]]` and `[[tabs]]` is optional and falls back to the defaults documented on each field.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Name of the config file inside the config folder.
+pub const CONFIG_FILE: &str = "jiraf.toml";
+/// Name of the secrets file inside the config folder.
+pub const ENV_FILE: &str = ".env";
 
 /// The whole `jiraf.toml`, plus the token taken from the environment.
 #[derive(Debug, Clone, Deserialize)]
@@ -29,22 +35,26 @@ pub struct Config {
     /// Filled from `JIRA_TOKEN`, never read from the TOML file.
     #[serde(skip)]
     pub token: String,
+    /// [`Server::icon_dir`] resolved against the config folder ([`resolve_icon_dir`]).
+    #[serde(skip)]
+    pub icon_dir: PathBuf,
 }
 
 /// `[server]` section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
-    /// Listen address (`host:port`). Defaults to `127.0.0.1:8080`; keep it on localhost.
-    #[serde(default = "default_bind")]
-    pub bind: String,
-    /// Local copies of Jira icons/avatars. A disposable cache: delete it any time.
+    /// Former listen address. Ignored by the app (it opens no port), but still accepted so older files load.
+    #[serde(default)]
+    pub bind: Option<String>,
+    /// Local copies of Jira icons/avatars. A disposable cache: delete it any time. A relative path is
+    /// relative to the config folder.
     #[serde(default = "default_icon_dir")]
     pub icon_dir: String,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        Self { bind: default_bind(), icon_dir: default_icon_dir() }
+        Self { bind: None, icon_dir: default_icon_dir() }
     }
 }
 
@@ -53,10 +63,6 @@ fn default_icon_dir() -> String {
     "icons".into()
 }
 
-/// Default for [`Server::bind`].
-fn default_bind() -> String {
-    "127.0.0.1:8080".into()
-}
 
 /// `[jira]` section.
 #[derive(Debug, Clone, Deserialize)]
@@ -206,22 +212,87 @@ fn resolve_excludes(bubbles: &[Bubble]) -> Result<Vec<Bubble>> {
         .collect()
 }
 
+/// The value of `name` in the dotenv file `env_file`, without touching the process environment.
+///
+/// # Errors
+/// If the file exists but can't be read or parsed.
+pub fn env_file_var(env_file: &Path, name: &str) -> Result<Option<String>> {
+    let iter = match dotenvy::from_path_iter(env_file) {
+        Ok(it) => it,
+        Err(dotenvy::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", env_file.display())),
+    };
+    for item in iter {
+        let (k, v) = item.with_context(|| format!("parsing {}", env_file.display()))?;
+        if k == name {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
+}
+
+/// The Jira token: `JIRA_TOKEN` from the process environment if set, else from `env_file`. Read
+/// afresh on every call, so an edited `.env` is picked up on reload.
+///
+/// # Errors
+/// If the token is missing or empty (the message names `env_file`), or the file can't be read.
+pub fn read_token(env_file: &Path) -> Result<String> {
+    let token = match std::env::var("JIRA_TOKEN").ok().filter(|t| !t.trim().is_empty()) {
+        Some(t) => t,
+        None => env_file_var(env_file, "JIRA_TOKEN")?.with_context(|| format!("JIRA_TOKEN is not set (put it in {})", env_file.display()))?,
+    };
+    if token.trim().is_empty() {
+        bail!("JIRA_TOKEN is empty in {}", env_file.display());
+    }
+    Ok(token)
+}
+
+/// Resolve [`Server::icon_dir`]: absolute paths as-is, relative ones against the config folder `dir`.
+pub fn resolve_icon_dir(dir: &Path, icon_dir: &str) -> PathBuf {
+    dir.join(icon_dir)
+}
+
+/// Create the config folder `dir` if needed, with `jiraf.example.toml` and `.env.example` in it when
+/// they're missing. Never writes `jiraf.toml` or `.env`.
+///
+/// # Errors
+/// If the folder or an example file can't be written.
+pub fn ensure_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    for (name, body) in [("jiraf.example.toml", include_str!("../jiraf.example.toml")), (".env.example", include_str!("../.env.example"))] {
+        let path = dir.join(name);
+        if !path.exists() {
+            std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 impl Config {
-    /// Read, parse and validate the config file at `path`, and take the token from `JIRA_TOKEN`.
+    /// Read, parse and validate `jiraf.toml` in the config folder `dir`, and take the token from
+    /// [`read_token`] (`dir/.env`).
     ///
-    /// Also normalises the Jira URL (no trailing slash) and resolves bubble excludes.
+    /// Also normalises the Jira URL (no trailing slash), resolves bubble excludes and the icon folder.
     ///
     /// # Errors
     /// If the file is missing or malformed, `JIRA_TOKEN` is unset or empty, there are no bubbles or tabs,
     /// bubble ids repeat, or an exclude is invalid.
-    pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {} (start from jiraf.example.toml: cp jiraf.example.toml jiraf.toml)", path.display()))?;
+    pub fn load(dir: &Path) -> Result<Self> {
+        let path = dir.join(CONFIG_FILE);
+        if !path.exists() {
+            bail!(
+                "{} not found: copy jiraf.example.toml to jiraf.toml and .env.example to .env in {}, then fill them in",
+                path.display(),
+                dir.display()
+            );
+        }
+        let raw = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: Config = toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
         cfg.jira.url = cfg.jira.url.trim_end_matches('/').to_string();
-        cfg.token = std::env::var("JIRA_TOKEN").context("JIRA_TOKEN is not set (put it in .env)")?;
-        if cfg.token.trim().is_empty() {
-            bail!("JIRA_TOKEN is empty");
+        cfg.token = read_token(&dir.join(ENV_FILE))?;
+        cfg.icon_dir = resolve_icon_dir(dir, &cfg.server.icon_dir);
+        if cfg.server.bind.is_some() {
+            log::warn!("[server] bind is ignored by the app");
         }
         if cfg.bubbles.is_empty() {
             bail!("jiraf.toml needs at least one [[bubbles]] entry");
@@ -260,6 +331,72 @@ mod tests {
     fn tabs_reject_legacy_label_keys() {
         assert!(toml::from_str::<Tab>("id = \"a\"\nname = \"A\"\nactivity_types = [\"Sostenibilidad\", \"Soporte a Comercial\"]\ninclude_unset = true").is_ok());
         assert!(toml::from_str::<Tab>("id = \"a\"\nname = \"A\"\nmatch = [\"roadmap\"]").is_err());
+    }
+
+    /// Writes `body` to `dir/name`.
+    fn put(dir: &Path, name: &str, body: &str) {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    #[test]
+    fn token_from_edited_env_file_wins_on_reload() {
+        if std::env::var("JIRA_TOKEN").is_ok() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        put(d.path(), ENV_FILE, "JIRA_TOKEN=a\n");
+        assert_eq!(read_token(&d.path().join(ENV_FILE)).unwrap(), "a");
+        put(d.path(), ENV_FILE, "JIRA_TOKEN=b\n");
+        assert_eq!(read_token(&d.path().join(ENV_FILE)).unwrap(), "b");
+    }
+
+    #[test]
+    fn token_missing_or_empty_names_the_file() {
+        if std::env::var("JIRA_TOKEN").is_ok() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let env = d.path().join(ENV_FILE);
+        let e = format!("{:#}", read_token(&env).unwrap_err());
+        assert!(e.contains("is not set") && e.contains(&env.display().to_string()), "{e}");
+        put(d.path(), ENV_FILE, "JIRA_TOKEN=\n");
+        let e = format!("{:#}", read_token(&env).unwrap_err());
+        assert!(e.contains("is empty"), "{e}");
+    }
+
+    #[test]
+    fn icon_dir_relative_and_absolute() {
+        assert_eq!(resolve_icon_dir(Path::new("/c"), "icons"), Path::new("/c/icons"));
+        assert_eq!(resolve_icon_dir(Path::new("/c"), "/tmp/i"), Path::new("/tmp/i"));
+    }
+
+    #[test]
+    fn ensure_dir_keeps_existing_files() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("cfg");
+        ensure_dir(&dir).unwrap();
+        assert!(dir.join("jiraf.example.toml").is_file() && dir.join(".env.example").is_file());
+        put(&dir, CONFIG_FILE, "mine");
+        put(&dir, ENV_FILE, "JIRA_TOKEN=x");
+        ensure_dir(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(CONFIG_FILE)).unwrap(), "mine");
+        assert_eq!(std::fs::read_to_string(dir.join(ENV_FILE)).unwrap(), "JIRA_TOKEN=x");
+    }
+
+    #[test]
+    fn missing_config_says_what_to_copy() {
+        let d = tempfile::tempdir().unwrap();
+        let e = format!("{:#}", Config::load(d.path()).unwrap_err());
+        assert!(e.contains("jiraf.example.toml") && e.contains(&d.path().display().to_string()), "{e}");
+    }
+
+    #[test]
+    fn loads_example_with_bind() {
+        let d = tempfile::tempdir().unwrap();
+        put(d.path(), CONFIG_FILE, &format!("{}\n", include_str!("../jiraf.example.toml").replacen("[server]", "[server]\nbind = \"127.0.0.1:8080\"", 1)));
+        put(d.path(), ENV_FILE, "JIRA_TOKEN=t\n");
+        let cfg = Config::load(d.path()).unwrap();
+        assert_eq!(cfg.icon_dir, d.path().join("icons"));
     }
 
     #[test]

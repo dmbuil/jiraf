@@ -13,7 +13,6 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::{Logger, Next, from_fn};
 use actix_web::{App, Error, HttpServer, error, http::Method, web};
 use anyhow::Context;
-use std::path::PathBuf;
 
 /// The server only ever listens on localhost, but a browser can still be tricked into talking to it:
 /// reject foreign Host headers (DNS rebinding) and require a custom header on writes, which other
@@ -39,17 +38,17 @@ async fn local_only(req: ServiceRequest, next: Next<impl MessageBody>) -> Result
     next.call(req).await
 }
 
-/// Entry point: `jiraf [path/to/jiraf.toml]` (defaults to `./jiraf.toml`).
+/// Entry point: `jiraf`, reading `jiraf.toml` and `.env` from the current directory.
 ///
 /// # Errors
 /// Fails fast on a bad config, an invalid token, an unknown Extended Status field id, or a busy port.
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,actix_server=warn")).init();
 
-    let path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("jiraf.toml"));
-    let cfg = config::Config::load(&path)?;
+    let dir = std::env::current_dir()?;
+    config::ensure_dir(&dir)?;
+    let cfg = config::Config::load(&dir)?;
     let jira = jira::Jira::new(&cfg)?;
 
     let me = jira.get("/rest/api/2/myself").await.context("checking JIRA_TOKEN against Jira")?;
@@ -60,15 +59,15 @@ async fn main() -> anyhow::Result<()> {
         .cloned()
         .with_context(|| format!("field {} (extended_status) not found in Jira", cfg.fields.extended_status))?;
 
-    let bind = cfg.server.bind.clone();
-    let cfg_icon_dir = cfg.server.icon_dir.clone();
+    let bind = cfg.server.bind.clone().unwrap_or_else(|| "127.0.0.1:8080".into());
+    let icon_dir = cfg.icon_dir.clone();
     let port = bind.rsplit(':').next().unwrap_or("8080").to_string();
     let hosts: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
     let state = web::Data::new(api::AppState {
         cfg,
         jira,
         ext_field_name,
-        icon_dir: PathBuf::from(&cfg_icon_dir),
+        icon_dir,
         cache: Default::default(),
         icons: Default::default(),
     });
