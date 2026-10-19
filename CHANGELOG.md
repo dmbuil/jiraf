@@ -4,6 +4,11 @@ All notable changes to jiraf. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Fixed
+
+- On macOS 26 the app icon showed small, inside a gray frame. The artwork now fills Apple's
+  rounded-square icon shape, so macOS shows it as is.
+
 ## [0.2.1] - 2026-10-19
 
 First release with ready-made builds for macOS and Windows.
