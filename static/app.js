@@ -476,6 +476,9 @@ async function load(refresh) {
   document.getElementById('sync').title = `Loaded from Jira at ${D.fetchedAt}. ← → switches bubble.`;
   setTab(state.tab); rerender();
 }
+// macOS draws the window buttons over the top bar (overlay title bar): see `.mac .top` in index.html.
+if (navigator.userAgent.includes('Mac')) document.documentElement.classList.add('mac');
+
 /* ---------- Jira links open in the default browser, never inside the jiraf window ---------- */
 document.addEventListener('click', e => {
   const a = e.target.closest('a[target=_blank]'); if (!a) return;

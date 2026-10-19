@@ -8,7 +8,10 @@
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true }
+      {
+        "label": "main", "title": "jiraf", "width": 1400, "height": 900, "resizable": true,
+        "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": { "x": 16, "y": 16 }
+      }
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: jiraf: http://jiraf.localhost; connect-src ipc: http://ipc.localhost; frame-ancestors 'none'"

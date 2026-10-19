@@ -36,6 +36,8 @@ img.ti,img.pi{width:16px;height:16px;flex:none;vertical-align:-3px}
 
 /* top bar */
 .top{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6;height:44px}
+/* macOS: the top bar is the title bar (overlay); leave room for the window buttons */
+.mac .top{padding-left:84px}
 .logo{font-weight:800;letter-spacing:-.5px;font-size:18px}
 .logo span{color:var(--accent)}
 .plan{display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted)}
@@ -224,9 +226,9 @@ body.failed main,body.failed .top>:not(.logo):not(#theme){display:none!important
 </style>
 </head>
 <body>
-<header class="top">
-  <div class="logo">j<span>i</span>raf</div>
-  <nav class="team" id="team"></nav>
+<header class="top" data-tauri-drag-region>
+  <div class="logo" data-tauri-drag-region>j<span>i</span>raf</div>
+  <nav class="team" id="team" data-tauri-drag-region></nav>
   <div class="scrl" id="scrl" hidden><button class="refresh" id="scrlL" title="Scroll projects left" aria-label="Scroll projects left">‹</button><button class="refresh" id="scrlR" title="Scroll projects right" aria-label="Scroll projects right">›</button></div>
   <div class="sync" id="sync" title="Live from Jira"><span class="dot" id="dot"></span><span id="now">loading…</span></div>
   <button class="refresh" id="theme" title="Theme"></button>

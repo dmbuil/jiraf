@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "The dashboard window: core APIs only. The opener plugin is used from Rust, never granted to the page.",
+  "description": "The dashboard window: core APIs, plus dragging/maximizing from the top bar (macOS overlay title bar). The opener plugin is used from Rust, never granted to the page.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"]
 }
