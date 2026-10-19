@@ -83,7 +83,7 @@ Everything lives in the config folder:
 ```
 ~/Library/Application Support/com.dmbuil.jiraf/
 ├── jiraf.toml           written by Settings: your Jira URL, field ids, tabs and bubbles
-├── jiraf.toml.bak       the previous jiraf.toml, kept on every save
+├── jiraf.toml.bak       the previous jiraf.toml, kept on every save (an unreadable one goes to jiraf.toml.broken)
 ├── .env                 JIRA_TOKEN=… (Settings only ever changes that line)
 ├── jiraf.example.toml   a commented example, if you prefer editing by hand
 ├── .env.example

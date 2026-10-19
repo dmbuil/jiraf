@@ -25,6 +25,33 @@ impl Problem {
     }
 }
 
+/// Trim what the form may carry with stray spaces (pasted ids, URL, names, list values), so what
+/// Jira checked is what gets saved. Empty list values are dropped; an empty icon project is none.
+pub fn normalize(cfg: &mut Config) {
+    let trim = |s: &mut String| *s = s.trim().to_string();
+    let list = |v: &mut Vec<String>| {
+        v.iter_mut().for_each(|s| *s = s.trim().to_string());
+        v.retain(|s| !s.is_empty());
+    };
+    cfg.jira.url = cfg.jira.url.trim().trim_end_matches('/').to_string();
+    let f = &mut cfg.fields;
+    for id in [&mut f.extended_status, &mut f.activity_type, &mut f.parent_link, &mut f.epic_link, &mut f.target_start, &mut f.target_end] {
+        trim(id);
+    }
+    trim(&mut cfg.follow_up.initiative_type);
+    list(&mut cfg.follow_up.hierarchy);
+    list(&mut cfg.follow_up.priority_order);
+    for b in &mut cfg.bubbles {
+        trim(&mut b.name);
+        b.icon_project = b.icon_project.take().map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    }
+    for t in &mut cfg.tabs {
+        trim(&mut t.name);
+        list(&mut t.activity_types);
+        list(&mut t.issues);
+    }
+}
+
 /// Everything that would stop `cfg` from loading or working, checked without Jira. `token_available`
 /// says whether a token was typed or one is already saved.
 pub fn validate(cfg: &Config, token_available: bool) -> Vec<Problem> {
@@ -175,28 +202,41 @@ pub async fn check_with_jira(cfg: &Config, token: &str) -> JiraCheck {
     out
 }
 
-/// Replace `path` in one step: write `<name>.tmp` next to it, then rename over it.
+/// Replace `path` in one step: write `<name>.tmp` next to it, then rename over it. The new file keeps
+/// the old one's permissions; a brand-new `private` file is readable by its owner only (Unix).
 ///
 /// # Errors
 /// If either step fails.
-fn atomic_write(path: &Path, body: &str) -> Result<()> {
+fn atomic_write(path: &Path, body: &str, private: bool) -> Result<()> {
     let name = path.file_name().context("no file name")?.to_string_lossy();
     let tmp = path.with_file_name(format!("{name}.tmp"));
     std::fs::write(&tmp, body).with_context(|| format!("writing {}", tmp.display()))?;
+    let perms = match std::fs::metadata(path) {
+        Ok(m) => Some(m.permissions()),
+        #[cfg(unix)]
+        Err(_) if private => Some(std::os::unix::fs::PermissionsExt::from_mode(0o600)),
+        Err(_) => None,
+    };
+    if let Some(p) = perms {
+        std::fs::set_permissions(&tmp, p).with_context(|| format!("setting permissions on {}", tmp.display()))?;
+    }
     std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
 }
 
-/// Write `cfg` as a clean `jiraf.toml` in `dir`, keeping the previous file as `jiraf.toml.bak`.
+/// Write `cfg` as a clean `jiraf.toml` in `dir`, keeping the previous file as `jiraf.toml.bak`. A
+/// previous file that doesn't parse goes to `jiraf.toml.broken` instead, so later saves (which rotate
+/// `.bak`) can't lose it.
 ///
 /// # Errors
 /// If the backup or the new file can't be written.
 pub fn write_config(dir: &Path, cfg: &Config) -> Result<()> {
     let path = dir.join(CONFIG_FILE);
-    if path.exists() {
-        let bak = dir.join(format!("{CONFIG_FILE}.bak"));
+    if let Ok(old) = std::fs::read_to_string(&path) {
+        let kind = if Config::parse(&old).is_ok() { "bak" } else { "broken" };
+        let bak = dir.join(format!("{CONFIG_FILE}.{kind}"));
         std::fs::copy(&path, &bak).with_context(|| format!("backing up to {}", bak.display()))?;
     }
-    atomic_write(&path, &crate::config::render_toml(cfg)?)
+    atomic_write(&path, &crate::config::render_toml(cfg)?, false)
 }
 
 /// Set `JIRA_TOKEN` in `env_file` to `token` (trimmed): its line is replaced in place (keeping the line
@@ -231,7 +271,7 @@ pub fn write_token(env_file: &Path, token: &str) -> Result<()> {
         out.push_str(&line);
         out.push('\n');
     }
-    atomic_write(env_file, &out)
+    atomic_write(env_file, &out, true)
 }
 
 /* ---------- commands ---------- */
@@ -302,8 +342,8 @@ pub fn settings(holder: tauri::State<'_, Holder>) -> SettingsView {
 #[tauri::command]
 pub async fn save_settings(holder: tauri::State<'_, Holder>, config: Config, token: Option<String>) -> Result<SaveReport, String> {
     let mut cfg = config;
+    normalize(&mut cfg);
     config::assign_ids(&mut cfg);
-    cfg.jira.url = cfg.jira.url.trim().trim_end_matches('/').to_string();
     let token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let env = holder.dir.join(ENV_FILE);
     let current = config::read_token(&env).ok();
@@ -463,6 +503,49 @@ mod tests {
     }
 
     #[test]
+    fn save_trims_what_jira_would_choke_on() {
+        let mut c = valid();
+        c.jira.url = " https://jira.example.com/ ".into();
+        c.fields.extended_status = "customfield_1 ".into();
+        c.follow_up.initiative_type = " Initiative".into();
+        c.follow_up.hierarchy = vec![" Initiative ".into(), "Epic".into()];
+        c.bubbles[0].name = " Alpha ".into();
+        c.bubbles[0].icon_project = Some("  ".into());
+        c.tabs[0].activity_types = vec![" Roadmap ".into()];
+        normalize(&mut c);
+        assert_eq!(c.jira.url, "https://jira.example.com");
+        assert_eq!(c.fields.extended_status, "customfield_1");
+        assert_eq!(c.follow_up.initiative_type, "Initiative");
+        assert_eq!(c.follow_up.hierarchy, ["Initiative", "Epic"]);
+        assert_eq!(c.bubbles[0].name, "Alpha");
+        assert_eq!(c.bubbles[0].icon_project, None);
+        assert_eq!(c.tabs[0].activity_types, ["Roadmap"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_file_keeps_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let env = d.path().join(".env");
+        write_token(&env, "t").unwrap();
+        assert_eq!(std::fs::metadata(&env).unwrap().permissions().mode() & 0o777, 0o600, "new file");
+        std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o640)).unwrap();
+        write_token(&env, "u").unwrap();
+        assert_eq!(std::fs::metadata(&env).unwrap().permissions().mode() & 0o777, 0o640, "existing file");
+    }
+
+    #[test]
+    fn unreadable_config_is_kept_apart_from_later_saves() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("jiraf.toml"), "not = [valid").unwrap();
+        write_config(d.path(), &valid()).unwrap();
+        write_config(d.path(), &valid()).unwrap();
+        assert_eq!(std::fs::read_to_string(d.path().join("jiraf.toml.broken")).unwrap(), "not = [valid");
+        assert!(std::fs::read_to_string(d.path().join("jiraf.toml.bak")).unwrap().starts_with("# Written by jiraf"));
+    }
+
+    #[test]
     fn env_only_token_line_changes() {
         let d = tempfile::tempdir().unwrap();
         let env = d.path().join(".env");
@@ -480,9 +563,10 @@ mod tests {
     #[test]
     fn config_write_keeps_a_backup_and_loads_back() {
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("jiraf.toml"), "# hand-written\n").unwrap();
+        let hand = include_str!("../jiraf.example.toml");
+        std::fs::write(d.path().join("jiraf.toml"), hand).unwrap();
         write_config(d.path(), &valid()).unwrap();
-        assert_eq!(std::fs::read_to_string(d.path().join("jiraf.toml.bak")).unwrap(), "# hand-written\n");
+        assert_eq!(std::fs::read_to_string(d.path().join("jiraf.toml.bak")).unwrap(), hand);
         let back = Config::parse(&std::fs::read_to_string(d.path().join("jiraf.toml")).unwrap()).unwrap();
         assert_eq!(back.bubbles[0].jql, valid().bubbles[0].jql);
         assert!(!d.path().join("jiraf.toml.tmp").exists());

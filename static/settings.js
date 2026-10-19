@@ -67,7 +67,7 @@ function itemHead(list, i, n, title) {
 function renderSettings() {
   const c = S.cfg, v = S.view, fu = c.follow_up;
   const banner = v.parseError
-    ? `<div class="banner">jiraf.toml couldn't be read: ${esc(v.parseError)}. Saving replaces it; the old file is kept as jiraf.toml.bak.</div>`
+    ? `<div class="banner">jiraf.toml couldn't be read: ${esc(v.parseError)}. Saving replaces it; the unreadable file is kept as jiraf.toml.broken in ${esc(v.configDir)}.</div>`
     : v.firstRun ? `<div class="banner cf-info">Welcome! Fill in your Jira details and at least one bubble, then Save.</div>` : '';
   const token = v.tokenSet && S.token === null
     ? `<div class="cf-row"><span class="cf-dots">••••••••••••</span><button type="button" class="tog" id="cfTokRep">Replace</button></div>`
@@ -143,6 +143,8 @@ function closeSettings() {
 }
 
 async function saveSettings() {
+  // a value typed into a list's box but not confirmed with Enter still counts
+  setSec.querySelectorAll('[data-add]').forEach(el => { const v = el.value.trim(); if (v) getPath(el.dataset.add).push(v); el.value = ''; });
   const btn = document.getElementById('cfSave');
   btn.disabled = true; btn.textContent = 'Saving…';
   let r;
