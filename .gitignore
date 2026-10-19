@@ -4,6 +4,7 @@
 .env
 jiraf.toml
 /icons
+jiraf.log
 /mockup
 
 .DS_Store

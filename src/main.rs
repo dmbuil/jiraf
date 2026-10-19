@@ -11,9 +11,11 @@ mod api;
 mod app;
 mod config;
 mod jira;
+mod logging;
 
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::{Emitter, Manager};
 
 /// The config folder: `$JIRAF_CONFIG_DIR` if set (handy with `cargo tauri dev`), else the app's
 /// config folder (`~/Library/Application Support/com.dmbuil.jiraf/` on macOS).
@@ -27,15 +29,29 @@ fn config_dir(app: &tauri::App) -> tauri::Result<PathBuf> {
     }
 }
 
+/// The default app menu plus "Reload config" (⌘⇧R / Ctrl+Shift+R) in its first submenu.
+///
+/// # Errors
+/// If the menu can't be built.
+fn menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app.handle())?;
+    let reload = MenuItem::with_id(app, "reload-config", "Reload config", true, Some("CmdOrCtrl+Shift+R"))?;
+    if let Some(first) = menu.items()?.first().and_then(|i| i.as_submenu()) {
+        first.append(&reload)?;
+    }
+    Ok(menu)
+}
+
 /// Entry point: open the window at once and start [`app::init`] in the background.
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let dir = config_dir(app)?;
-            log::info!("config folder: {}", dir.display());
+            logging::init(&dir)?;
+            log::info!("jiraf {} starting; config folder: {}", env!("CARGO_PKG_VERSION"), dir.display());
+            app.set_menu(menu(app)?)?;
             app.manage(app::Holder::new(dir.clone()));
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -43,6 +59,14 @@ fn main() {
                 handle.state::<app::Holder>().set(r);
             });
             Ok(())
+        })
+        // Reload config: the page runs the same flow as its Retry button.
+        .on_menu_event(|app, event| {
+            if event.id() == "reload-config"
+                && let Err(e) = app.emit("reload-config", ())
+            {
+                log::warn!("reload-config: {e}");
+            }
         })
         // Jira icons and avatars, fetched with the token and cached (see `api::icon_response`).
         .register_asynchronous_uri_scheme_protocol("jiraf", |ctx, req, responder| {

@@ -506,5 +506,6 @@ async function retryFlow() {
   if (s.state === 'ready') location.reload(); else showStartupError(s);
 }
 document.getElementById('retry').onclick = retryFlow;
+window.__TAURI__.event.listen('reload-config', retryFlow);
 document.getElementById('openDir').onclick = () => api('open_config_dir').catch(e => toast(esc(e.message), true));
 boot();
